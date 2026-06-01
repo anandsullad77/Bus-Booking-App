@@ -193,7 +193,8 @@ h2{color:var(--navy)}
 .side-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px}
 .side-card h3{color:var(--navy);font-size:1.05rem;margin-bottom:14px}
 .side-label{display:block;font-size:.78rem;color:var(--muted);font-weight:600;margin:10px 0 5px}
-.side-card select,.side-card input{
+.side-card select,
+.side-card input:not([type=radio]):not([type=checkbox]){
   width:100%;border:1.5px solid var(--line);border-radius:8px;padding:10px 12px;
   font-family:inherit;font-size:.95rem;
 }
@@ -231,10 +232,112 @@ h2{color:var(--navy)}
 }
 .pay-methods{display:flex;flex-direction:column;gap:10px;margin:18px 0}
 .pay-method{
-  border:1.5px solid var(--line);border-radius:10px;padding:14px;cursor:pointer;
-  display:flex;align-items:center;gap:10px;font-weight:500;
+  border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;cursor:pointer;
+  display:flex;align-items:center;gap:12px;transition:border-color .15s,background .15s;
 }
 .pay-method:hover{border-color:var(--blue)}
+/* radio reset — the global side-card input rule no longer touches radios */
+.pay-method input[type=radio]{
+  width:18px;height:18px;margin:0;flex:0 0 auto;accent-color:var(--red);cursor:pointer;
+}
+.pay-method .pm-icon{font-size:1.35rem;line-height:1;flex:0 0 auto}
+.pay-method .pm-text{display:flex;flex-direction:column;flex:1 1 auto;text-align:left;min-width:0}
+.pay-method .pm-name{font-weight:600;color:var(--navy)}
+.pay-method .pm-note{font-weight:400;font-size:.78rem;color:var(--muted);margin-top:1px}
+/* highlight the chosen method */
+.pay-method:has(input:checked){border-color:var(--red);background:#fff5f5}
+
+/* ====================================================================
+   PDF E-TICKET (boarding pass) — rendered off-screen, captured to PDF
+   Fixed pixel sizing so it looks identical regardless of device.
+   ==================================================================== */
+#pdf-ticket-holder{position:fixed;left:-10000px;top:0;width:760px;z-index:-1;opacity:1;pointer-events:none}
+#pdf-ticket{width:760px;background:#fff;font-family:'Poppins',Arial,sans-serif;color:#1f2937}
+
+.pt{position:relative;border:1px solid #d8dee9;border-radius:16px;overflow:hidden}
+.pt > *{position:relative;z-index:1}
+/* diagonal watermark — higher specificity so it stays absolute */
+.pt .pt-watermark{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:90px;font-weight:700;color:rgba(29,53,87,.05);
+  transform:rotate(-28deg);letter-spacing:6px;pointer-events:none;z-index:0;
+}
+
+/* header band */
+.pt-head{
+  background:linear-gradient(120deg,#1d3557 0%,#457b9d 100%);color:#fff;
+  padding:22px 28px;display:flex;justify-content:space-between;align-items:center;
+}
+.pt-brand{display:flex;align-items:center;gap:12px}
+.pt-logo{background:#e63946;color:#fff;font-weight:700;font-size:1.25rem;
+  padding:8px 14px;border-radius:10px;letter-spacing:1px}
+.pt-brand-name{font-size:1.25rem;font-weight:700;line-height:1}
+.pt-brand-sub{font-size:.72rem;opacity:.85;letter-spacing:2px;text-transform:uppercase}
+.pt-doc{text-align:right}
+.pt-doc-type{font-size:.72rem;letter-spacing:2px;opacity:.85;text-transform:uppercase}
+.pt-doc-pnr{font-size:1.6rem;font-weight:700;letter-spacing:3px}
+
+/* confirmed stamp */
+.pt .pt-stamp{
+  position:absolute;top:96px;right:34px;z-index:2;
+  border:3px solid #2a9d8f;color:#2a9d8f;border-radius:8px;
+  padding:4px 12px;font-weight:700;letter-spacing:2px;font-size:.95rem;
+  transform:rotate(-12deg);opacity:.9;
+}
+
+/* route strip */
+.pt-route{display:flex;align-items:center;justify-content:space-between;padding:24px 28px 18px;gap:10px}
+.pt-city{flex:1}
+.pt-city.to{text-align:right}
+.pt-city .name{font-size:1.55rem;font-weight:700;color:#1d3557;line-height:1.1}
+.pt-city .time{font-size:1.05rem;font-weight:600;color:#1f2937;margin-top:2px}
+.pt-city .pt-place{font-size:.78rem;color:#6b7280;margin-top:2px}
+.pt-mid{flex:0 0 auto;text-align:center;color:#457b9d;min-width:120px}
+.pt-mid .dur{font-size:.8rem;font-weight:600}
+.pt-mid .line{font-size:1.1rem;letter-spacing:-2px}
+.pt-mid .bus-emoji{font-size:1.2rem}
+
+/* info grid */
+.pt-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-top:1px dashed #d8dee9;border-bottom:1px dashed #d8dee9}
+.pt-cell{padding:14px 28px;border-right:1px solid #eef2f6}
+.pt-cell:last-child{border-right:none}
+.pt-cell .lbl{font-size:.66rem;text-transform:uppercase;letter-spacing:.5px;color:#9aa3b2}
+.pt-cell .val{font-weight:600;color:#1d3557;font-size:.92rem;margin-top:3px}
+
+/* passengers + fare + qr */
+.pt-body{display:grid;grid-template-columns:1.3fr 1fr;gap:0}
+.pt-pax{padding:18px 28px;border-right:1px dashed #d8dee9}
+.pt-pax h4,.pt-side h4{font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#9aa3b2;margin-bottom:10px}
+.pt-pax table{width:100%;border-collapse:collapse;font-size:.86rem}
+.pt-pax th{text-align:left;color:#6b7280;font-weight:600;font-size:.7rem;padding:5px 6px;border-bottom:1px solid #eef2f6}
+.pt-pax td{padding:7px 6px;border-bottom:1px solid #f3f5f8;color:#1f2937}
+.pt-amen{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px}
+.pt-amen span{background:#f1faee;color:#1d3557;border:1px solid #e2e8f0;border-radius:20px;padding:3px 10px;font-size:.7rem}
+
+.pt-side{padding:18px 28px;text-align:center}
+.pt-qr{width:120px;height:120px;margin:0 auto 6px;border:1px solid #eef2f6;border-radius:8px;padding:6px;background:#fff}
+.pt-qr img{width:100%;height:100%;display:block}
+.pt-scan{font-size:.7rem;color:#6b7280}
+.pt-fare{margin-top:14px;text-align:left}
+.pt-fare .row{display:flex;justify-content:space-between;font-size:.84rem;padding:3px 0;color:#374151}
+.pt-fare .row.total{border-top:1px solid #d8dee9;margin-top:6px;padding-top:8px;font-weight:700;color:#1d3557;font-size:1.05rem}
+
+/* barcode strip */
+.pt-barcode{border-top:1px dashed #d8dee9;padding:14px 28px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+.pt-barcode img{height:54px}
+.pt-barcode .bc-pnr{font-size:.74rem;color:#6b7280;letter-spacing:2px}
+
+/* instructions / footer */
+.pt-notes{background:#f8fafc;padding:16px 28px;border-top:1px solid #eef2f6}
+.pt-notes h5{font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#1d3557;margin-bottom:8px}
+.pt-notes ul{margin:0;padding-left:18px;color:#4b5563;font-size:.76rem;line-height:1.6}
+/* travel quote band */
+.pt-quote{padding:18px 28px;text-align:center;background:#f1faee;border-top:1px solid #eef2f6}
+.pt-quote .q{font-style:italic;color:#1d3557;font-size:1rem;line-height:1.5}
+.pt-quote .a{margin-top:6px;font-size:.78rem;color:#457b9d;font-weight:600;letter-spacing:.5px}
+.pt-foot{display:flex;justify-content:space-between;align-items:center;padding:14px 28px;background:#1d3557;color:#fff;flex-wrap:wrap;gap:6px}
+.pt-foot .tag{font-weight:600}
+.pt-foot .contact{font-size:.74rem;opacity:.85}
 
 /* ---------- Ticket ---------- */
 .ticket-success{text-align:center;margin-bottom:24px}

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MS Travels — Admin Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root{
+      --red:#e63946;--red-dark:#c1121f;--navy:#1d3557;--blue:#457b9d;
+      --light:#f1faee;--bg:#f4f6f9;--card:#fff;--line:#e2e8f0;
+      --text:#1f2937;--muted:#6b7280;--green:#2a9d8f;
+      --shadow:0 6px 24px rgba(29,53,87,.08);
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Poppins',system-ui,sans-serif;color:var(--text);background:var(--bg)}
+    a{color:inherit}
+    .muted{color:var(--muted)}
+    [hidden]{display:none !important}
+
+    /* ---------- Login gate ---------- */
+    .gate{
+      position:fixed;inset:0;background:linear-gradient(135deg,var(--navy),var(--blue));
+      display:flex;align-items:center;justify-content:center;padding:20px;z-index:100;
+    }
+    .gate-card{
+      background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);
+      padding:36px 32px;width:100%;max-width:380px;text-align:center;
+    }
+    .gate-logo{background:var(--red);color:#fff;font-weight:700;font-size:1.2rem;
+      padding:8px 16px;border-radius:10px;display:inline-block;letter-spacing:1px;margin-bottom:18px}
+    .gate-card h1{font-size:1.3rem;color:var(--navy);margin-bottom:4px}
+    .gate-card p{font-size:.88rem;color:var(--muted);margin-bottom:22px}
+    .gate-card input{
+      width:100%;border:1.5px solid var(--line);border-radius:10px;padding:13px 14px;
+      font-family:inherit;font-size:1rem;margin-bottom:14px;
+    }
+    .gate-card input:focus{outline:none;border-color:var(--blue)}
+    .gate-card button{
+      width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;
+      padding:13px;font-size:1rem;font-weight:600;cursor:pointer;font-family:inherit;
+    }
+    .gate-card button:hover{background:var(--red-dark)}
+    .gate-err{color:var(--red-dark);font-size:.85rem;margin-bottom:12px;min-height:18px}
+    .gate-note{margin-top:16px;font-size:.72rem;color:#9aa3b2;line-height:1.5}
+
+    /* ---------- Dashboard ---------- */
+    .topbar{background:var(--navy);color:#fff;position:sticky;top:0;z-index:20;box-shadow:0 2px 12px rgba(0,0,0,.12)}
+    .topbar-inner{max-width:1240px;margin:0 auto;padding:0 20px;height:62px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .tb-brand{display:flex;align-items:center;gap:10px;font-weight:700}
+    .tb-logo{background:var(--red);padding:4px 10px;border-radius:8px;letter-spacing:1px}
+    .tb-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .btn{border:1.5px solid rgba(255,255,255,.4);background:transparent;color:#fff;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:.85rem}
+    .btn:hover{background:rgba(255,255,255,.12)}
+    .btn-solid{background:var(--red);border-color:var(--red)}
+    .btn-solid:hover{background:var(--red-dark)}
+
+    .wrap{max-width:1240px;margin:0 auto;padding:24px 20px 60px}
+
+    /* stats */
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+    .stat{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px}
+    .stat .n{font-size:1.8rem;font-weight:700;color:var(--navy);line-height:1}
+    .stat .l{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:6px}
+    .stat.green .n{color:var(--green)}
+    .stat.red .n{color:var(--red)}
+
+    /* tabs */
+    .tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+    .tab{background:#fff;border:1.5px solid var(--line);color:var(--navy);padding:9px 18px;border-radius:24px;cursor:pointer;font-family:inherit;font-weight:500;font-size:.9rem}
+    .tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+
+    /* toolbar */
+    .toolbar{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+    .toolbar input,.toolbar select{
+      border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:.9rem;
+    }
+    .toolbar input:focus,.toolbar select:focus{outline:none;border-color:var(--blue)}
+    .toolbar .search{flex:1;min-width:200px}
+    .toolbar .count{margin-left:auto;font-size:.85rem;color:var(--muted)}
+
+    /* table */
+    .panel{background:var(--card);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+    .table-scroll{overflow-x:auto}
+    table{width:100%;border-collapse:collapse;font-size:.88rem;min-width:760px}
+    thead th{background:#f8fafc;text-align:left;color:var(--muted);font-weight:600;font-size:.74rem;
+      text-transform:uppercase;letter-spacing:.4px;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+    tbody td{padding:12px 14px;border-bottom:1px solid #f1f4f8;vertical-align:top}
+    tbody tr:hover{background:#fafcff}
+    .pnr{font-weight:700;color:var(--navy);letter-spacing:1px}
+    .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.72rem;font-weight:600}
+    .pill.green{background:#e7f6f3;color:var(--green)}
+    .pill.grey{background:#eef2f6;color:#64748b}
+    .seat-chip{display:inline-block;background:var(--light);color:var(--navy);border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-size:.74rem;margin:1px}
+    .link-btn{background:none;border:none;color:var(--blue);cursor:pointer;font-family:inherit;font-size:.82rem;padding:0;text-decoration:underline}
+    .pax-detail{background:#f8fafc}
+    .pax-detail table{min-width:0}
+    .pax-detail th,.pax-detail td{padding:7px 10px;font-size:.82rem}
+    .empty{padding:40px;text-align:center;color:var(--muted)}
+    .loading{padding:40px;text-align:center;color:var(--muted)}
+
+    .amenity-mini{font-size:.72rem;color:var(--muted)}
+
+    @media(max-width:760px){
+      .stats{grid-template-columns:repeat(2,1fr)}
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ================= LOGIN GATE ================= -->
+  <div class="gate" id="gate">
+    <div class="gate-card">
+      <div class="gate-logo">MS</div>
+      <h1>Admin Dashboard</h1>
+      <p>Enter the admin password to continue.</p>
+      <form id="gate-form">
+        <input type="password" id="gate-pass" placeholder="Password" autocomplete="off" autofocus />
+        <div class="gate-err" id="gate-err"></div>
+        <button type="submit">Unlock</button>
+      </form>
+      <p class="gate-note">⚠️ This is a basic client-side gate, not full security.
+        For production use Supabase Auth + Row-Level Security.</p>
+    </div>
+  </div>
+
+  <!-- ================= DASHBOARD ================= -->
+  <div id="dash" hidden>
+    <div class="topbar">
+      <div class="topbar-inner">
+        <div class="tb-brand"><span class="tb-logo">MS</span> Travels · Admin</div>
+        <div class="tb-actions">
+          <button class="btn" onclick="Admin.refresh()">↻ Refresh</button>
+          <button class="btn" onclick="Admin.exportCSV()">⬇ Export Bookings CSV</button>
+          <a class="btn" href="index.html">↗ View Site</a>
+          <button class="btn btn-solid" onclick="Admin.logout()">Log out</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <!-- stats -->
+      <div class="stats" id="stats"></div>
+
+      <!-- tabs -->
+      <div class="tabs">
+        <button class="tab active" id="tab-bookings" onclick="Admin.showTab('bookings')">🎟 Bookings &amp; Passengers</button>
+        <button class="tab" id="tab-buses" onclick="Admin.showTab('buses')">🚌 Buses / Routes</button>
+      </div>
+
+      <!-- BOOKINGS -->
+      <section id="view-bookings">
+        <div class="toolbar">
+          <input class="search" id="b-search" placeholder="Search PNR, name, city, phone…" oninput="Admin.renderBookings()" />
+          <input type="date" id="b-date" onchange="Admin.renderBookings()" title="Filter by journey date" />
+          <button class="link-btn" onclick="Admin.clearBookingFilters()">Clear</button>
+          <span class="count" id="b-count"></span>
+        </div>
+        <div class="panel">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>PNR</th><th>Booked On</th><th>Journey Date</th><th>Route</th>
+                  <th>Bus Type</th><th>Seats</th><th>Passengers</th><th>Contact</th>
+                  <th>Fare</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="b-body"><tr><td colspan="10" class="loading">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- BUSES -->
+      <section id="view-buses" hidden>
+        <div class="toolbar">
+          <input class="search" id="r-search" placeholder="Search operator, city, bus type…" oninput="Admin.renderRoutes()" />
+          <span class="count" id="r-count"></span>
+        </div>
+        <div class="panel">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th><th>Operator</th><th>Bus Type</th><th>From</th><th>To</th>
+                  <th>Dep</th><th>Arr</th><th>Duration</th><th>Fare</th>
+                  <th>Seats</th><th>Rating</th><th>Amenities</th><th>Active</th>
+                </tr>
+              </thead>
+              <tbody id="r-body"><tr><td colspan="13" class="loading">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>

@@ -184,9 +184,30 @@
         <p class="demo-badge">DEMO MODE — no real money is charged</p>
 
         <div class="pay-methods">
-          <label class="pay-method"><input type="radio" name="paymethod" checked> UPI</label>
-          <label class="pay-method"><input type="radio" name="paymethod"> Credit / Debit Card</label>
-          <label class="pay-method"><input type="radio" name="paymethod"> Net Banking</label>
+          <label class="pay-method">
+            <input type="radio" name="paymethod" value="upi" checked>
+            <span class="pm-icon">📱</span>
+            <span class="pm-text">
+              <span class="pm-name">UPI</span>
+              <span class="pm-note">GPay / PhonePe / Paytm</span>
+            </span>
+          </label>
+          <label class="pay-method">
+            <input type="radio" name="paymethod" value="card">
+            <span class="pm-icon">💳</span>
+            <span class="pm-text">
+              <span class="pm-name">Credit / Debit Card</span>
+              <span class="pm-note">Visa, Mastercard, RuPay</span>
+            </span>
+          </label>
+          <label class="pay-method">
+            <input type="radio" name="paymethod" value="netbanking">
+            <span class="pm-icon">🏦</span>
+            <span class="pm-text">
+              <span class="pm-name">Net Banking</span>
+              <span class="pm-note">All major banks</span>
+            </span>
+          </label>
         </div>
 
         <button class="primary-btn full" id="pay-now-btn" onclick="App.confirmBooking()">Pay Now</button>
@@ -207,7 +228,7 @@
       <div class="ticket" id="ticket-card"><!-- ticket details --></div>
 
       <div class="ticket-actions">
-        <button class="primary-btn" onclick="App.printTicket()">Download / Print</button>
+        <button class="primary-btn" onclick="App.downloadTicket()">⬇ Download Ticket (PDF)</button>
         <button class="ghost-btn" onclick="App.goHome()">Book Another</button>
       </div>
     </div>
@@ -243,6 +264,19 @@
   <!-- Toast -->
   <div class="toast" id="toast" hidden></div>
 
+  <!-- Hidden print-quality ticket, rendered into the PDF on download -->
+  <div id="pdf-ticket-holder" aria-hidden="true">
+    <div id="pdf-ticket"><!-- built by app.js --></div>
+  </div>
+
+  <!-- Client-side PDF generation + QR / barcode for the ticket.
+       Explicit html2canvas + jsPDF so window.html2canvas / window.jspdf.jsPDF
+       are guaranteed globals (the all-in-one bundle did not expose them, which
+       made the ticket fall back to the browser print dialog). -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

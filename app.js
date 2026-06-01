@@ -492,7 +492,217 @@
       </div>`;
   }
 
-  function printTicket() { window.print(); }
+  /* ---------- PDF e-ticket (boarding pass) ---------- */
+
+  // QR as a PNG data-URL (most reliable for html2canvas). Falls back to '' if lib missing.
+  function makeQRDataURL(text, size) {
+    if (typeof window.QRCode === 'undefined') return '';
+    try {
+      const tmp = document.createElement('div');
+      // qrcodejs draws synchronously onto a <canvas>
+      new window.QRCode(tmp, {
+        text: text, width: size, height: size,
+        colorDark: '#1d3557', colorLight: '#ffffff',
+        correctLevel: window.QRCode.CorrectLevel.M
+      });
+      const cv = tmp.querySelector('canvas');
+      if (cv) return cv.toDataURL('image/png');
+      const img = tmp.querySelector('img');
+      return img ? img.src : '';
+    } catch (e) { console.warn('QR failed', e); return ''; }
+  }
+
+  // CODE128 barcode of the PNR as a PNG data-URL.
+  function makeBarcodeDataURL(text) {
+    if (typeof window.JsBarcode === 'undefined') return '';
+    try {
+      const cv = document.createElement('canvas');
+      window.JsBarcode(cv, text, {
+        format: 'CODE128', displayValue: false, height: 54, width: 2,
+        margin: 0, lineColor: '#1d3557', background: '#ffffff'
+      });
+      return cv.toDataURL('image/png');
+    } catch (e) { console.warn('Barcode failed', e); return ''; }
+  }
+
+  // Build the rich ticket DOM into #pdf-ticket and return the element.
+  function buildPdfTicket(b) {
+    const bp = b.boarding_point || {};
+    const dp = b.dropping_point || {};
+    const seats = b.seats || [];
+    const route = state.route || {};
+    const amenities = (route.amenities && route.amenities.length) ? route.amenities : null;
+
+    // Fare breakdown (totals stay consistent: GST assumed included @5%)
+    const total = Number(b.total_fare) || 0;
+    const base  = Math.round(total / 1.05);
+    const gst   = total - base;
+
+    const paxRows = (b.passengers || []).map((p, i) =>
+      `<tr><td>${i + 1}</td><td>${p.name}</td><td>${p.age}</td><td>${p.gender}</td><td><strong>${p.seat}</strong></td></tr>`
+    ).join('');
+
+    const amenHtml = amenities
+      ? `<div class="pt-amen">${amenities.map(a => `<span>${a}</span>`).join('')}</div>` : '';
+
+    // QR encodes the key trip facts so it can be scanned at boarding
+    const qrPayload =
+      `MS TRAVELS E-TICKET\nPNR:${b.pnr}\n${b.source_city}->${b.destination_city}\n` +
+      `${prettyDate(b.journey_date)} ${b.departure_time}\nSeats:${seats.join(',')}\n` +
+      `Passengers:${(b.passengers || []).length}\nFare:Rs.${total}`;
+    const qrUrl = makeQRDataURL(qrPayload, 240);
+    const bcUrl = makeBarcodeDataURL(b.pnr);
+
+    const html = `
+      <div class="pt">
+        <div class="pt-watermark">MS TRAVELS</div>
+
+        <div class="pt-head">
+          <div class="pt-brand">
+            <div class="pt-logo">MS</div>
+            <div>
+              <div class="pt-brand-name">MS Travels</div>
+              <div class="pt-brand-sub">Safe • Reliable • On-time</div>
+            </div>
+          </div>
+          <div class="pt-doc">
+            <div class="pt-doc-type">E-Ticket / Boarding Pass</div>
+            <div class="pt-doc-pnr">${b.pnr}</div>
+          </div>
+        </div>
+
+        <div class="pt-stamp">✓ ${b.status || 'CONFIRMED'}</div>
+
+        <div class="pt-route">
+          <div class="pt-city from">
+            <div class="name">${b.source_city}</div>
+            <div class="time">${b.departure_time}</div>
+            <div class="pt-place">${bp.name || ''}</div>
+          </div>
+          <div class="pt-mid">
+            <div class="dur">${route.duration || ''}</div>
+            <div class="line">———▶</div>
+            <div class="bus-emoji">🚌</div>
+          </div>
+          <div class="pt-city to">
+            <div class="name">${b.destination_city}</div>
+            <div class="time">${b.arrival_time}</div>
+            <div class="pt-place">${dp.name || ''}</div>
+          </div>
+        </div>
+
+        <div class="pt-grid">
+          <div class="pt-cell"><div class="lbl">Journey Date</div><div class="val">${prettyDate(b.journey_date)}</div></div>
+          <div class="pt-cell"><div class="lbl">Bus Type</div><div class="val">${b.bus_type}</div></div>
+          <div class="pt-cell"><div class="lbl">Boarding</div><div class="val">${bp.name || '-'}<br>${bp.time || ''}</div></div>
+          <div class="pt-cell"><div class="lbl">Dropping</div><div class="val">${dp.name || '-'}<br>${dp.time || ''}</div></div>
+        </div>
+
+        <div class="pt-body">
+          <div class="pt-pax">
+            <h4>Passengers — Seats ${seats.join(', ')}</h4>
+            <table>
+              <thead><tr><th>#</th><th>Name</th><th>Age</th><th>Gender</th><th>Seat</th></tr></thead>
+              <tbody>${paxRows}</tbody>
+            </table>
+            ${amenHtml}
+          </div>
+          <div class="pt-side">
+            <h4>Scan at Boarding</h4>
+            <div class="pt-qr">${qrUrl ? `<img src="${qrUrl}" alt="QR">` : '<span style="font-size:.7rem;color:#9aa3b2">QR unavailable</span>'}</div>
+            <div class="pt-scan">PNR ${b.pnr}</div>
+            <div class="pt-fare">
+              <div class="row"><span>Base Fare (${seats.length} × seat)</span><span>${rupee(base)}</span></div>
+              <div class="row"><span>GST (5%, incl.)</span><span>${rupee(gst)}</span></div>
+              <div class="row total"><span>Total Paid</span><span>${rupee(total)}</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-barcode">
+          ${bcUrl ? `<img src="${bcUrl}" alt="barcode">` : ''}
+          <div class="bc-pnr">${b.pnr}</div>
+        </div>
+
+        <div class="pt-notes">
+          <h5>Boarding Instructions</h5>
+          <ul>
+            <li>Reach the boarding point at least <strong>15 minutes</strong> before departure (${b.departure_time}).</li>
+            <li>Carry a valid government photo ID — it may be checked at boarding.</li>
+            <li>Show this e-ticket (printed or on your phone); the QR/barcode will be scanned.</li>
+            <li>Tickets are non-transferable. Baggage allowance: up to 15 kg per passenger.</li>
+          </ul>
+        </div>
+
+        <div class="pt-quote">
+          <div class="q">“The world is a book and those who do not travel read only one page.”</div>
+          <div class="a">— Saint Augustine</div>
+        </div>
+
+        <div class="pt-foot">
+          <span class="tag">🚌 Wishing you a safe &amp; happy journey!</span>
+          <span class="contact">Helpline 1800-200-1234 • support@mstravels.demo • mstravels.demo</span>
+        </div>
+      </div>`;
+
+    const host = document.getElementById('pdf-ticket');
+    host.innerHTML = html;
+    return host;
+  }
+
+  // Generate a PDF of the ticket and download it. We render the ticket to a
+  // canvas, then place it on an A4 page scaled to FIT (so nothing is clipped).
+  function downloadTicket() {
+    const b = state.booking;
+    if (!b) { toast('No ticket to download', true); return; }
+    const filename = `MS-Travels-Ticket-${b.pnr || 'ticket'}.pdf`;
+
+    const haveLibs = typeof window.html2canvas !== 'undefined'
+      && window.jspdf && window.jspdf.jsPDF;
+    if (!haveLibs) {
+      toast('Preparing print view…');
+      window.print();
+      return;
+    }
+
+    overlay(true, 'Generating your ticket PDF…');
+    const el = buildPdfTicket(b);
+
+    // Small delay so the QR/barcode images paint before we capture.
+    setTimeout(() => {
+      window.html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' })
+        .then((canvas) => {
+          const imgData = canvas.toDataURL('image/jpeg', 0.98);
+          const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
+          const pageW = pdf.internal.pageSize.getWidth();   // 210mm
+          const pageH = pdf.internal.pageSize.getHeight();  // 297mm
+          const margin = 10;
+          const availW = pageW - margin * 2;
+          const availH = pageH - margin * 2;
+
+          // Fit to width; if that makes it taller than the page, fit to height
+          // instead so the whole ticket stays on a single A4 sheet.
+          let w = availW;
+          let h = canvas.height * w / canvas.width;
+          if (h > availH) { h = availH; w = canvas.width * h / canvas.height; }
+
+          const x = (pageW - w) / 2;     // centre horizontally
+          const y = margin;              // top aligned
+          pdf.addImage(imgData, 'JPEG', x, y, w, h);
+          pdf.save(filename);
+          toast('Ticket downloaded as ' + filename);
+        })
+        .catch((err) => {
+          console.error(err);
+          toast('Could not generate PDF — opening print view instead.', true);
+          window.print();
+        })
+        .finally(() => overlay(false));
+    }, 150);
+  }
+
+  // Kept for backwards compatibility (older button hook).
+  function printTicket() { downloadTicket(); }
 
   /* ---------------- PNR lookup ---------------- */
   function openLookup() {
@@ -533,7 +743,7 @@
   window.App = {
     search, setDate, swapCities, applyFilters,
     selectBus, toggleSeat, toPassengerDetails, toPayment, confirmBooking,
-    printTicket, openLookup, lookupPNR,
+    printTicket, downloadTicket, openLookup, lookupPNR,
     goHome, backToResults, backToSeats
   };
 
