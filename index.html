@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MS Travels — Book Bus Tickets Online</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ============ HEADER ============ -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="#" class="brand" onclick="App.goHome();return false;">
+        <span class="brand-mark">MS</span>
+        <span class="brand-text">Travels</span>
+      </a>
+      <nav class="header-nav">
+        <a href="#" onclick="App.goHome();return false;">Home</a>
+        <a href="#" onclick="App.openLookup();return false;">My Bookings</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ============ HERO + SEARCH ============ -->
+  <section class="hero" id="view-hero">
+    <div class="container">
+      <h1>Book Bus Tickets Online</h1>
+      <p class="hero-sub">Safe, reliable and on-time. India's trusted travel partner.</p>
+
+      <form class="search-card" id="search-form" onsubmit="App.search(event)">
+        <div class="search-field">
+          <label>From</label>
+          <input list="city-list" id="from-city" placeholder="Leaving from" autocomplete="off" required />
+        </div>
+
+        <button type="button" class="swap-btn" title="Swap" onclick="App.swapCities()">⇄</button>
+
+        <div class="search-field">
+          <label>To</label>
+          <input list="city-list" id="to-city" placeholder="Going to" autocomplete="off" required />
+        </div>
+
+        <div class="search-field">
+          <label>Date of Journey</label>
+          <input type="date" id="journey-date" required />
+        </div>
+
+        <button type="submit" class="search-btn">Search Buses</button>
+      </form>
+
+      <div class="quick-dates">
+        <button type="button" onclick="App.setDate(0)">Today</button>
+        <button type="button" onclick="App.setDate(1)">Tomorrow</button>
+      </div>
+
+      <datalist id="city-list"></datalist>
+    </div>
+  </section>
+
+  <!-- ============ RESULTS ============ -->
+  <section class="view" id="view-results" hidden>
+    <div class="container">
+      <div class="results-head">
+        <div>
+          <h2 id="results-route">Bangalore → Hyderabad</h2>
+          <p id="results-meta" class="muted"></p>
+        </div>
+        <button class="ghost-btn" onclick="App.goHome()">Modify Search</button>
+      </div>
+
+      <div class="results-layout">
+        <aside class="filters">
+          <h3>Filters</h3>
+          <div class="filter-group">
+            <h4>Bus Type</h4>
+            <label><input type="checkbox" class="f-type" value="A/C" onchange="App.applyFilters()"> A/C</label>
+            <label><input type="checkbox" class="f-type" value="Non A/C" onchange="App.applyFilters()"> Non A/C</label>
+            <label><input type="checkbox" class="f-type" value="Sleeper" onchange="App.applyFilters()"> Sleeper</label>
+            <label><input type="checkbox" class="f-type" value="Seater" onchange="App.applyFilters()"> Seater</label>
+          </div>
+          <div class="filter-group">
+            <h4>Departure</h4>
+            <label><input type="checkbox" class="f-time" value="morning" onchange="App.applyFilters()"> Before 12 PM</label>
+            <label><input type="checkbox" class="f-time" value="evening" onchange="App.applyFilters()"> 12 PM – 6 PM</label>
+            <label><input type="checkbox" class="f-time" value="night" onchange="App.applyFilters()"> After 6 PM</label>
+          </div>
+        </aside>
+
+        <div class="results-list" id="results-list"><!-- bus cards --></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SEAT SELECTION ============ -->
+  <section class="view" id="view-seats" hidden>
+    <div class="container">
+      <button class="ghost-btn back" onclick="App.backToResults()">← Back to buses</button>
+      <h2 id="seats-title">Select Your Seats</h2>
+      <p id="seats-sub" class="muted"></p>
+
+      <div class="seats-layout">
+        <div class="seat-map-wrap">
+          <div class="seat-legend">
+            <span><i class="seat-demo available"></i> Available</span>
+            <span><i class="seat-demo selected"></i> Selected</span>
+            <span><i class="seat-demo booked"></i> Booked</span>
+            <span><i class="seat-demo ladies"></i> Ladies</span>
+          </div>
+          <div id="seat-map"><!-- decks --></div>
+        </div>
+
+        <div class="booking-side">
+          <div class="side-card">
+            <h3>Boarding & Dropping</h3>
+            <label class="side-label">Boarding Point</label>
+            <select id="boarding-select"></select>
+            <label class="side-label">Dropping Point</label>
+            <select id="dropping-select"></select>
+          </div>
+
+          <div class="side-card">
+            <h3>Selected Seats</h3>
+            <p id="selected-seats-text" class="muted">No seats selected</p>
+            <div class="fare-row"><span>Seats</span><span id="seat-count">0</span></div>
+            <div class="fare-row total"><span>Total Fare</span><span id="seat-total">₹0</span></div>
+            <button class="primary-btn full" id="to-passenger-btn" disabled onclick="App.toPassengerDetails()">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PASSENGER DETAILS ============ -->
+  <section class="view" id="view-passenger" hidden>
+    <div class="container narrow">
+      <button class="ghost-btn back" onclick="App.backToSeats()">← Back to seats</button>
+      <h2>Passenger Details</h2>
+
+      <form id="passenger-form" onsubmit="App.toPayment(event)">
+        <div id="passenger-fields"><!-- one block per seat --></div>
+
+        <div class="side-card">
+          <h3>Contact Details</h3>
+          <p class="muted small">Your ticket &amp; PNR will be sent here.</p>
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Full Name</label>
+              <input type="text" id="contact-name" required />
+            </div>
+            <div class="form-field">
+              <label>Email</label>
+              <input type="email" id="contact-email" required />
+            </div>
+            <div class="form-field">
+              <label>Mobile Number</label>
+              <input type="tel" id="contact-phone" pattern="[0-9]{10}" maxlength="10" placeholder="10-digit number" required />
+            </div>
+          </div>
+        </div>
+
+        <div class="pay-summary">
+          <div>
+            <span class="muted">Total Payable</span>
+            <strong id="passenger-total">₹0</strong>
+          </div>
+          <button type="submit" class="primary-btn">Proceed to Pay</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ============ PAYMENT (DEMO) ============ -->
+  <section class="view" id="view-payment" hidden>
+    <div class="container narrow">
+      <h2>Payment</h2>
+      <div class="side-card pay-card">
+        <div class="pay-amount">
+          <span class="muted">Amount to Pay</span>
+          <strong id="pay-amount">₹0</strong>
+        </div>
+        <p class="demo-badge">DEMO MODE — no real money is charged</p>
+
+        <div class="pay-methods">
+          <label class="pay-method"><input type="radio" name="paymethod" checked> UPI</label>
+          <label class="pay-method"><input type="radio" name="paymethod"> Credit / Debit Card</label>
+          <label class="pay-method"><input type="radio" name="paymethod"> Net Banking</label>
+        </div>
+
+        <button class="primary-btn full" id="pay-now-btn" onclick="App.confirmBooking()">Pay Now</button>
+        <button class="ghost-btn full" onclick="App.backToSeats()">Cancel</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TICKET / CONFIRMATION ============ -->
+  <section class="view" id="view-ticket" hidden>
+    <div class="container narrow">
+      <div class="ticket-success">
+        <div class="check-circle">✓</div>
+        <h2>Booking Confirmed!</h2>
+        <p class="muted">Your ticket has been booked successfully.</p>
+      </div>
+
+      <div class="ticket" id="ticket-card"><!-- ticket details --></div>
+
+      <div class="ticket-actions">
+        <button class="primary-btn" onclick="App.printTicket()">Download / Print</button>
+        <button class="ghost-btn" onclick="App.goHome()">Book Another</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MY BOOKINGS LOOKUP ============ -->
+  <section class="view" id="view-lookup" hidden>
+    <div class="container narrow">
+      <button class="ghost-btn back" onclick="App.goHome()">← Home</button>
+      <h2>My Bookings</h2>
+      <p class="muted">Enter your PNR number to view your ticket.</p>
+      <form class="lookup-form" onsubmit="App.lookupPNR(event)">
+        <input type="text" id="lookup-pnr" placeholder="e.g. MS7K2P9" required />
+        <button class="primary-btn" type="submit">Find Ticket</button>
+      </form>
+      <div id="lookup-result"></div>
+    </div>
+  </section>
+
+  <!-- ============ FOOTER ============ -->
+  <footer class="site-footer">
+    <div class="container">
+      <p>© MS Travels — Bus Booking Demo built on Supabase.</p>
+    </div>
+  </footer>
+
+  <!-- Loading overlay -->
+  <div class="overlay" id="overlay" hidden>
+    <div class="spinner"></div>
+    <p id="overlay-text">Loading…</p>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
