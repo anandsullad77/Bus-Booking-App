@@ -284,6 +284,10 @@ h2{color:var(--navy)}
   padding:4px 12px;font-weight:700;letter-spacing:2px;font-size:.95rem;
   transform:rotate(-12deg);opacity:.9;
 }
+/* cancelled stamp */
+.pt .pt-stamp.cancelled{
+  border-color:#e63946;color:#e63946;
+}
 
 /* route strip */
 .pt-route{display:flex;align-items:center;justify-content:space-between;padding:24px 28px 18px;gap:10px}
@@ -373,6 +377,55 @@ h2{color:var(--navy)}
 .lookup-form input{flex:1;min-width:200px;border:1.5px solid var(--line);border-radius:10px;padding:13px 16px;font-family:inherit;font-size:1rem;text-transform:uppercase}
 .lookup-form input:focus{outline:none;border-color:var(--blue)}
 
+/* ---------- Cancellation ---------- */
+.danger-btn{
+  background:var(--red);color:#fff;border:none;border-radius:10px;
+  padding:13px 22px;font-family:inherit;font-size:.95rem;font-weight:600;cursor:pointer;transition:background .15s;
+}
+.danger-btn:hover{background:var(--red-dark)}
+.danger-btn:disabled{background:#cbd5e1;cursor:not-allowed}
+.cancel-box{display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}
+.cancel-info{margin-top:18px}
+.cancel-note{
+  margin-top:18px;background:#fff5f5;border:1px solid var(--red);color:var(--red-dark);
+  border-radius:10px;padding:14px 18px;font-size:.92rem;font-weight:500;
+}
+.cancel-confirm{margin-top:18px}
+.cancel-confirm h3{color:var(--navy);font-size:1.15rem;margin-bottom:6px}
+.refund-rows{margin:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:6px 0}
+
+/* ---------- Email login (My Bookings) ---------- */
+.auth-card{margin-top:18px}
+.auth-card p{margin-bottom:16px}
+.auth-form{display:flex;flex-direction:column;gap:6px}
+.auth-form label{font-size:.8rem;font-weight:600;color:var(--navy)}
+.auth-form input{
+  border:1.5px solid var(--line);border-radius:10px;padding:13px 14px;
+  font-family:inherit;font-size:1rem;margin-bottom:10px;
+}
+.auth-form input:focus{outline:none;border-color:var(--blue)}
+#mb-code{letter-spacing:8px;text-align:center;font-size:1.3rem;font-weight:600}
+
+.mb-userbar{
+  display:flex;justify-content:space-between;align-items:center;gap:12px;
+  flex-wrap:wrap;margin-bottom:18px;
+}
+.mb-card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:18px 20px;margin-bottom:14px;
+  display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;
+}
+.mb-card.is-cancelled{opacity:.72}
+.mb-route{font-size:1.1rem;font-weight:700;color:var(--navy)}
+.mb-meta{font-size:.9rem;color:var(--text);margin-top:2px}
+.mb-sub{font-size:.8rem;margin-top:4px}
+.mb-card-side{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.mb-status{font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:20px}
+.mb-status.confirmed{background:#e7f6f3;color:var(--green)}
+.mb-status.cancelled{background:#fdecee;color:var(--red-dark)}
+.mb-card-side .primary-btn{padding:9px 18px;font-size:.88rem}
+.mb-detail-title{color:var(--navy);font-size:1.1rem;margin:26px 0 12px}
+
 /* ---------- Footer ---------- */
 .site-footer{background:var(--navy);color:rgba(255,255,255,.8);padding:24px 0;text-align:center;font-size:.85rem;margin-top:40px}
 
@@ -394,70 +447,107 @@ h2{color:var(--navy)}
 .toast.error{background:var(--red-dark)}
 
 /* ---------- Responsive ---------- */
+
+/* Tablet */
 @media(max-width:900px){
   .results-layout{grid-template-columns:1fr}
   .filters{position:static}
   .filters .filter-group{display:inline-block;vertical-align:top;margin-right:28px}
-  .seats-layout{grid-template-columns:1fr}
+  .seats-layout{grid-template-columns:1fr;margin-top:14px}
   /* On tablet/phone the seat map comes first, summary follows below it */
   .booking-side{position:static;order:2}
   .seat-map-wrap{order:1}
+  .hero h1{font-size:2rem}
 }
 
+/* Phone */
 @media(max-width:640px){
   .container{padding:0 14px}
-  .header-inner{height:56px}
-  .brand{font-size:1.05rem}
-  .header-nav{gap:14px;font-size:.88rem}
 
-  .hero{padding:40px 0 64px}
-  .hero h1{font-size:1.6rem}
-  .hero-sub{font-size:.95rem;margin-bottom:24px}
+  /* Header stays on one row, comfortably */
+  .header-inner{height:56px}
+  .brand{font-size:1.05rem;gap:7px}
+  .brand-mark{padding:3px 8px}
+  .header-nav{gap:14px;font-size:.86rem}
+
+  /* Hero + search */
+  .hero{padding:34px 0 52px}
+  .hero h1{font-size:1.55rem;line-height:1.25}
+  .hero-sub{font-size:.92rem;margin-bottom:22px}
   .search-card{flex-direction:column;align-items:stretch;gap:10px;padding:14px}
   .search-field{min-width:0}
   .swap-btn{align-self:center;width:46px;transform:rotate(90deg)}
   .search-btn{width:100%;padding:14px}
+  .quick-dates{flex-wrap:wrap}
 
   .view{padding:20px 0 40px}
   .results-head{flex-direction:column}
-  .results-head h2{font-size:1.25rem}
+  .results-head h2{font-size:1.2rem}
+  .results-head .ghost-btn{width:100%}
 
-  .bus-card{grid-template-columns:1fr;padding:16px;gap:12px}
-  .bus-side{text-align:left;flex-direction:row;flex-wrap:wrap;justify-content:space-between;align-items:center}
+  /* Bus card → single column with a clean route row */
+  .bus-card{grid-template-columns:1fr;padding:16px;gap:14px}
+  .bus-operator{font-size:1.05rem}
+  .bus-times{gap:10px;justify-content:space-between}
+  .bus-time{font-size:1.05rem}
+  .bus-dash{flex:1;text-align:center;font-size:.7rem}
+  .bus-side{text-align:left;flex-direction:row;flex-wrap:wrap;justify-content:space-between;
+    align-items:center;border-top:1px solid var(--line);padding-top:14px}
+  .bus-fare{font-size:1.3rem}
   .select-seat-btn{flex:1 1 100%;padding:12px}
 
-  /* Seat map: scrollable, slightly smaller berths so a 2+1 row fits */
-  .seat-map-wrap{padding:16px}
-  .seat-legend{gap:12px;font-size:.78rem}
-  .seat.sleeper{width:58px;height:32px}
+  /* Seat map: scrollable, centred legend, slightly smaller berths */
+  .seat-map-wrap{padding:14px}
+  .seat-legend{gap:10px 14px;font-size:.76rem;justify-content:center}
+  #seat-map{padding-bottom:6px}
+  .seat.sleeper{width:56px;height:32px}
   .seat{width:42px;height:42px}
 
   /* 16px inputs stop iOS from zooming the page on focus */
   .side-card input,.side-card select,
   .form-field input,.form-field select,
+  .auth-form input,
   .lookup-form input{font-size:16px}
   .form-grid{grid-template-columns:1fr 1fr}
   .pay-summary{flex-direction:column;align-items:stretch;gap:12px;text-align:center}
   .pay-summary .primary-btn{width:100%}
+  .pay-card{margin:14px auto}
 
+  /* Ticket */
   .ticket-top{flex-direction:column;align-items:flex-start}
+  .ticket-body{padding:18px}
+  .ticket-route{gap:8px}
+  .ticket-city{font-size:1.1rem}
   .ticket-grid{grid-template-columns:1fr 1fr}
   .ticket-pax table{font-size:.82rem}
   .ticket-pax th,.ticket-pax td{padding:6px 4px}
   .ticket-actions{flex-direction:column}
   .ticket-actions button{width:100%}
 
+  /* My Bookings + auth */
   .lookup-form{flex-direction:column}
   .lookup-form .primary-btn{width:100%}
+  .mb-userbar{flex-direction:column;align-items:stretch;gap:10px;text-align:center}
+  .mb-userbar .ghost-btn{width:100%}
+  .mb-card{flex-direction:column;align-items:stretch}
+  .mb-card-side{justify-content:space-between}
+  .mb-card-side .primary-btn{flex:1}
+
+  .cancel-box{flex-direction:column}
+  .cancel-box button{width:100%}
 
   .toast{left:14px;right:14px;transform:none;text-align:center}
 }
 
-@media(max-width:380px){
-  .hero h1{font-size:1.4rem}
+/* Small phone */
+@media(max-width:400px){
+  .hero h1{font-size:1.35rem}
+  .header-nav{gap:10px;font-size:.82rem}
   .form-grid{grid-template-columns:1fr}
   .ticket-grid{grid-template-columns:1fr}
+  .bus-times{flex-wrap:wrap}
   .seat.sleeper{width:52px}
+  .seat{width:40px;height:40px}
 }
 
 /* ---------- Print ---------- */

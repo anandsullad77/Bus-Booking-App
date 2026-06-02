@@ -11,14 +11,14 @@
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1cXF2cHVya21vbnJydXptdWd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMjI1MDIsImV4cCI6MjA5NTg5ODUwMn0.6wCU-x7HVi1rhDfzFHxbv-T6R7VXAM01K0kr8KB1ZqY';
   const REST = SUPABASE_URL + '/rest/v1';
 
-  // ---- Admin password (client-side gate only) ----
-  const ADMIN_PASSWORD = 'MStravel2026';
-  const SESSION_KEY = 'ms_admin_ok';
+  // ---- Admin email (must match public.is_admin() in supabase-schema.sql) ----
+  // >>> CHANGE THIS to the email you will use to log in as admin <<<
+  const ADMIN_EMAIL = 'anandsullad77@gmail.com';
 
-  const HEADERS = {
-    apikey: SUPABASE_ANON,
-    Authorization: 'Bearer ' + SUPABASE_ANON
-  };
+  // Supabase JS client handles the one-time-code login + authenticated reads.
+  const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  let pendingEmail = '';
 
   const state = { routes: [], bookings: [], tab: 'bookings' };
 
@@ -41,21 +41,70 @@
     return d.toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
-  /* ---------------- Auth gate ---------------- */
-  function initGate() {
-    if (sessionStorage.getItem(SESSION_KEY) === '1') return unlock();
-    $('gate-form').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const val = $('gate-pass').value;
-      if (val === ADMIN_PASSWORD) {
-        sessionStorage.setItem(SESSION_KEY, '1');
-        unlock();
-      } else {
-        $('gate-err').textContent = 'Incorrect password. Try again.';
-        $('gate-pass').value = '';
-        $('gate-pass').focus();
+  /* ---------------- Auth gate (email one-time code) ---------------- */
+  async function initGate() {
+    // Wire up both step forms.
+    $('gate-email-form').addEventListener('submit', sendCode);
+    $('gate-code-form').addEventListener('submit', verifyCode);
+    $('gate-back').addEventListener('click', (e) => { e.preventDefault(); showStep('email'); });
+
+    // Already signed in (and is the admin)? Go straight in.
+    const { data: { session } } = await sbClient.auth.getSession();
+    if (session && session.user && isAdmin(session.user)) {
+      unlock();
+    } else {
+      if (session) await sbClient.auth.signOut(); // a non-admin session — clear it
+      showStep('email');
+    }
+  }
+
+  function isAdmin(user) {
+    return user && (user.email || '').toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  }
+
+  function showStep(step) {
+    $('gate-email-step').hidden = step !== 'email';
+    $('gate-code-step').hidden  = step !== 'code';
+  }
+
+  async function sendCode(e) {
+    e.preventDefault();
+    $('gate-err').textContent = '';
+    const email = $('gate-email').value.trim();
+    if (!email) return;
+    if (email.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+      $('gate-err').textContent = 'This email is not authorised for admin access.';
+      return;
+    }
+    try {
+      const { error } = await sbClient.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+      if (error) throw error;
+      pendingEmail = email;
+      $('gate-email-echo').textContent = email;
+      $('gate-code').value = '';
+      showStep('code');
+    } catch (err) {
+      $('gate-err').textContent = 'Could not send code: ' + err.message;
+    }
+  }
+
+  async function verifyCode(e) {
+    e.preventDefault();
+    $('gate-err2').textContent = '';
+    const token = $('gate-code').value.trim();
+    if (!token || !pendingEmail) return;
+    try {
+      const { data, error } = await sbClient.auth.verifyOtp({ email: pendingEmail, token, type: 'email' });
+      if (error) throw error;
+      if (!isAdmin(data.user)) {
+        await sbClient.auth.signOut();
+        $('gate-err2').textContent = 'This account is not authorised for admin access.';
+        return;
       }
-    });
+      unlock();
+    } catch (err) {
+      $('gate-err2').textContent = 'Invalid or expired code. Try again.';
+    }
   }
 
   function unlock() {
@@ -64,16 +113,20 @@
     loadAll();
   }
 
-  function logout() {
-    sessionStorage.removeItem(SESSION_KEY);
+  async function logout() {
+    await sbClient.auth.signOut();
     location.reload();
   }
 
   /* ---------------- Data ---------------- */
-  async function sbGet(path) {
-    const res = await fetch(REST + path, { headers: HEADERS });
-    if (!res.ok) throw new Error('Supabase ' + res.status + ': ' + (await res.text()));
-    return res.json();
+  // Authenticated read through the Supabase client. RLS lets the admin email
+  // (and only the admin email) read every booking; routes are public.
+  async function sbSelect(table, opts) {
+    let q = sbClient.from(table).select('*');
+    if (opts && opts.order) q = q.order(opts.order, { ascending: !!opts.ascending });
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return data || [];
   }
 
   async function loadAll() {
@@ -81,8 +134,8 @@
       $('b-body').innerHTML = '<tr><td colspan="10" class="loading">Loading…</td></tr>';
       $('r-body').innerHTML = '<tr><td colspan="13" class="loading">Loading…</td></tr>';
       const [routes, bookings] = await Promise.all([
-        sbGet('/bus_routes?select=*&order=id.asc'),
-        sbGet('/bus_bookings?select=*&order=created_at.desc')
+        sbSelect('bus_routes', { order: 'id', ascending: true }),
+        sbSelect('bus_bookings', { order: 'created_at', ascending: false })
       ]);
       state.routes = routes || [];
       state.bookings = bookings || [];

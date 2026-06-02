@@ -48,37 +48,107 @@ create table if not exists public.bus_bookings (
   contact_email   text    not null,
   contact_phone   text    not null,
   total_fare      numeric not null,
-  status          text    not null default 'CONFIRMED',
+  status          text    not null default 'CONFIRMED',   -- 'CONFIRMED' | 'CANCELLED'
+  cancelled_at    timestamptz,                            -- set when the booking is cancelled
+  refund_amount   numeric,                                -- amount refunded on cancellation
   created_at      timestamptz not null default now()
 );
+
+-- If the table already exists from an earlier run, add the cancellation columns.
+alter table public.bus_bookings
+  add column if not exists cancelled_at  timestamptz,
+  add column if not exists refund_amount numeric;
 
 -- Fast seat-availability lookups (which seats are booked for a route on a date)
 create index if not exists idx_bookings_route_date
   on public.bus_bookings (route_id, journey_date);
 
 -- ------------------------------------------------------------
--- 3. ROW LEVEL SECURITY
---    Frontend uses the public anon key, so we allow:
---      - anyone to READ active routes
---      - anyone to READ + CREATE bookings (demo app, no auth)
+-- 3. ROW LEVEL SECURITY  (email-based login)
+--    - anyone may READ active routes (needed to search)
+--    - anyone may CREATE a booking (anonymous checkout)
+--    - a signed-in user may READ / UPDATE only THEIR OWN bookings
+--      (matched on contact_email = their verified login email)
+--    - the admin email may READ / UPDATE every booking
+--    Seat availability is exposed via a PII-free function (booked_seats)
+--    so the anonymous booking flow never needs to read the table.
 -- ------------------------------------------------------------
 alter table public.bus_routes   enable row level security;
 alter table public.bus_bookings enable row level security;
 
+-- >>> CHANGE THIS to the email you will use to log in as admin <<<
+--     (must match ADMIN_EMAIL in admin.js)
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+as $$
+  select coalesce(lower(auth.jwt() ->> 'email') = lower('anandsullad77@gmail.com'), false);
+$$;
+
+-- Routes: public read (so visitors can search without logging in)
 drop policy if exists "routes_public_read" on public.bus_routes;
 create policy "routes_public_read"
   on public.bus_routes for select
   using (true);
 
-drop policy if exists "bookings_public_read" on public.bus_bookings;
-create policy "bookings_public_read"
+-- Bookings: a signed-in user sees only their own; admin sees all
+drop policy if exists "bookings_public_read"  on public.bus_bookings;
+drop policy if exists "bookings_owner_read"   on public.bus_bookings;
+create policy "bookings_owner_read"
   on public.bus_bookings for select
-  using (true);
+  to authenticated
+  using (
+    lower(contact_email) = lower(auth.jwt() ->> 'email')
+    or public.is_admin()
+  );
 
+-- Bookings: anyone (anonymous checkout) may create a booking
 drop policy if exists "bookings_public_insert" on public.bus_bookings;
-create policy "bookings_public_insert"
+drop policy if exists "bookings_anon_insert"   on public.bus_bookings;
+create policy "bookings_anon_insert"
   on public.bus_bookings for insert
+  to anon, authenticated
   with check (true);
+
+-- Bookings: only the owner (or admin) may update — used for cancellation
+drop policy if exists "bookings_public_update" on public.bus_bookings;
+drop policy if exists "bookings_owner_update"  on public.bus_bookings;
+create policy "bookings_owner_update"
+  on public.bus_bookings for update
+  to authenticated
+  using (
+    lower(contact_email) = lower(auth.jwt() ->> 'email')
+    or public.is_admin()
+  )
+  with check (
+    lower(contact_email) = lower(auth.jwt() ->> 'email')
+    or public.is_admin()
+  );
+
+-- ------------------------------------------------------------
+-- 3b. SEAT AVAILABILITY (no PII)
+--     Returns just the list of booked seat ids for a route+date so the
+--     public booking flow can grey out taken seats WITHOUT reading the
+--     bookings table directly. SECURITY DEFINER bypasses RLS but only
+--     ever returns seat labels — never names, emails or phone numbers.
+-- ------------------------------------------------------------
+create or replace function public.booked_seats(p_route_id bigint, p_journey_date date)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(jsonb_agg(elem), '[]'::jsonb)
+  from public.bus_bookings b
+  cross join lateral jsonb_array_elements(b.seats) as elem
+  where b.route_id = p_route_id
+    and b.journey_date = p_journey_date
+    and b.status = 'CONFIRMED';
+$$;
+
+grant execute on function public.booked_seats(bigint, date) to anon, authenticated;
 
 -- ============================================================
 -- 4. SEED DATA — VRL-style routes

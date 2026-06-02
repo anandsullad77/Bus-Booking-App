@@ -19,7 +19,7 @@
       </a>
       <nav class="header-nav">
         <a href="#" onclick="App.goHome();return false;">Home</a>
-        <a href="#" onclick="App.openLookup();return false;">My Bookings</a>
+        <a href="#" onclick="App.openMyBookings();return false;">My Bookings</a>
       </nav>
     </div>
   </header>
@@ -234,17 +234,45 @@
     </div>
   </section>
 
-  <!-- ============ MY BOOKINGS LOOKUP ============ -->
-  <section class="view" id="view-lookup" hidden>
+  <!-- ============ MY BOOKINGS (EMAIL LOGIN) ============ -->
+  <section class="view" id="view-mybookings" hidden>
     <div class="container narrow">
       <button class="ghost-btn back" onclick="App.goHome()">← Home</button>
       <h2>My Bookings</h2>
-      <p class="muted">Enter your PNR number to view your ticket.</p>
-      <form class="lookup-form" onsubmit="App.lookupPNR(event)">
-        <input type="text" id="lookup-pnr" placeholder="e.g. MS7K2P9" required />
-        <button class="primary-btn" type="submit">Find Ticket</button>
-      </form>
-      <div id="lookup-result"></div>
+
+      <!-- Step 1 — enter email -->
+      <div class="side-card auth-card" id="mb-email-step">
+        <p class="muted">Sign in with your email to view and manage your tickets.
+          We'll send a one-time code to confirm it's you.</p>
+        <form class="auth-form" onsubmit="App.sendCode(event)">
+          <label>Email address</label>
+          <input type="email" id="mb-email" placeholder="you@example.com" autocomplete="email" required />
+          <button class="primary-btn full" type="submit">Send Code</button>
+        </form>
+      </div>
+
+      <!-- Step 2 — enter code -->
+      <div class="side-card auth-card" id="mb-code-step" hidden>
+        <p class="muted">We sent a code to <strong id="mb-email-echo"></strong>.
+          Enter it below to sign in.</p>
+        <form class="auth-form" onsubmit="App.verifyCode(event)">
+          <label>Verification code</label>
+          <input type="text" id="mb-code" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]*" maxlength="10" placeholder="Enter code" required />
+          <button class="primary-btn full" type="submit">Verify &amp; Sign In</button>
+          <button class="ghost-btn full" type="button" onclick="App.backToEmail()">Use a different email</button>
+        </form>
+      </div>
+
+      <!-- Step 3 — signed in -->
+      <div id="mb-list-step" hidden>
+        <div class="mb-userbar">
+          <span class="muted">Signed in as <strong id="mb-user-email"></strong></span>
+          <button class="ghost-btn" onclick="App.signOut()">Sign out</button>
+        </div>
+        <div id="mb-bookings"></div>
+        <div id="mb-detail"></div>
+      </div>
     </div>
   </section>
 
@@ -277,6 +305,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <!-- Supabase JS client — powers the email one-time-code login -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>

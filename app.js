@@ -16,6 +16,9 @@
     'Content-Type': 'application/json'
   };
 
+  // ---- Supabase JS client (handles the email one-time-code login + session) ----
+  const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
   // ---- App state ----
   const state = {
     allRoutes: [],        // routes returned by last search
@@ -25,7 +28,10 @@
     bookedSeats: [],      // seat ids already booked for this route+date
     seatLayout: [],       // generated seat objects
     selected: [],         // selected seat ids
-    booking: null         // final booking record
+    booking: null,        // final / currently viewed booking record
+    user: null,           // signed-in user (My Bookings)
+    pendingEmail: '',     // email awaiting code verification
+    myBookings: []        // bookings for the signed-in user
   };
 
   const CITIES = ['Bangalore', 'Hyderabad', 'Mumbai', 'Pune', 'Goa', 'Chennai', 'Delhi', 'Coimbatore', 'Mangalore', 'Hubli'];
@@ -74,13 +80,26 @@
     return res.json();
   }
 
-  async function sbPost(table, body) {
+  // Insert without asking for the row back. Anonymous checkout can write a
+  // booking but (by design) cannot read the bookings table, so requesting a
+  // representation would fail RLS — we already hold all the fields locally.
+  async function sbInsert(table, body) {
     const res = await fetch(REST + '/' + table, {
       method: 'POST',
-      headers: { ...HEADERS, Prefer: 'return=representation' },
+      headers: HEADERS,
       body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error('Supabase POST ' + res.status + ': ' + (await res.text()));
+  }
+
+  // Call a Postgres function (e.g. booked_seats) via PostgREST RPC.
+  async function sbRpc(fn, body) {
+    const res = await fetch(REST + '/rpc/' + fn, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('Supabase RPC ' + res.status + ': ' + (await res.text()));
     return res.json();
   }
 
@@ -204,11 +223,11 @@
     overlay(true, 'Loading seat map…');
     try {
       // which seats are already booked for this route on this date?
-      const q = `/bus_bookings?route_id=eq.${state.route.id}`
-        + `&journey_date=eq.${state.search.date}`
-        + `&select=seats`;
-      const rows = await sbGet(q);
-      state.bookedSeats = rows.flatMap(r => r.seats || []);
+      const seats = await sbRpc('booked_seats', {
+        p_route_id: state.route.id,
+        p_journey_date: state.search.date
+      });
+      state.bookedSeats = Array.isArray(seats) ? seats : [];
       buildSeatLayout();
       renderSeatMap();
       renderBoardingDropping();
@@ -424,8 +443,8 @@
     overlay(true, 'Processing payment…');
     try {
       // Re-check seat availability to avoid double-booking
-      const fresh = await sbGet(`/bus_bookings?route_id=eq.${r.id}&journey_date=eq.${state.search.date}&select=seats`);
-      const taken = fresh.flatMap(x => x.seats || []);
+      const fresh = await sbRpc('booked_seats', { p_route_id: r.id, p_journey_date: state.search.date });
+      const taken = Array.isArray(fresh) ? fresh : [];
       const clash = state.selected.filter(s => taken.includes(s));
       if (clash.length) {
         toast('Seats ' + clash.join(', ') + ' were just booked. Please pick again.', true);
@@ -436,17 +455,32 @@
         return;
       }
 
-      const saved = await sbPost('bus_bookings', booking);
-      state.booking = Array.isArray(saved) ? saved[0] : saved;
+      // Save the booking. Anonymous checkout can't read the row back, so we
+      // render the ticket from the object we just built (it has every field).
+      await sbInsert('bus_bookings', booking);
+      state.booking = booking;
       renderTicket(state.booking);
       showView('view-ticket');
       toast('Booking confirmed! PNR ' + state.booking.pnr);
+      sendTicketEmail(state.booking);   // email the e-ticket (non-blocking)
     } catch (err) {
       console.error(err);
       toast('Booking failed: ' + err.message, true);
     } finally {
       overlay(false);
       $('pay-now-btn').disabled = false;
+    }
+  }
+
+  // Email the e-ticket via the send-ticket Edge Function. Non-blocking: the
+  // booking already succeeded, so a mail failure must not break the flow.
+  async function sendTicketEmail(b) {
+    try {
+      const { error } = await sbClient.functions.invoke('send-ticket', { body: { booking: b } });
+      if (error) throw error;
+      toast('Ticket emailed to ' + b.contact_email);
+    } catch (err) {
+      console.warn('Ticket email failed (booking still confirmed):', err);
     }
   }
 
@@ -477,7 +511,7 @@
           <div><div class="label">Dropping</div><div class="val">${dp.name || '-'} (${dp.time || '-'})</div></div>
           <div><div class="label">Seats</div><div class="val">${(b.seats || []).join(', ')}</div></div>
           <div><div class="label">Contact</div><div class="val">${b.contact_phone}</div></div>
-          <div><div class="label">Status</div><div class="val" style="color:var(--green)">${b.status}</div></div>
+          <div><div class="label">Status</div><div class="val" style="color:${b.status === 'CANCELLED' ? 'var(--red)' : 'var(--green)'}">${b.status}</div></div>
         </div>
         <div class="ticket-pax">
           <table>
@@ -571,7 +605,7 @@
           </div>
         </div>
 
-        <div class="pt-stamp">✓ ${b.status || 'CONFIRMED'}</div>
+        <div class="pt-stamp ${b.status === 'CANCELLED' ? 'cancelled' : ''}">${b.status === 'CANCELLED' ? '✕' : '✓'} ${b.status || 'CONFIRMED'}</div>
 
         <div class="pt-route">
           <div class="pt-city from">
@@ -704,31 +738,245 @@
   // Kept for backwards compatibility (older button hook).
   function printTicket() { downloadTicket(); }
 
-  /* ---------------- PNR lookup ---------------- */
-  function openLookup() {
-    $('lookup-result').innerHTML = '';
-    $('lookup-pnr').value = '';
-    showView('view-lookup');
-  }
+  /* ---------------- My Bookings (email one-time-code login) ---------------- */
 
-  async function lookupPNR(e) {
-    if (e) e.preventDefault();
-    const pnr = $('lookup-pnr').value.trim().toUpperCase();
-    if (!pnr) return;
-    overlay(true, 'Finding your ticket…');
+  // Open the My Bookings area. If already signed in, go straight to the list.
+  async function openMyBookings() {
+    showView('view-mybookings');
+    overlay(true, 'Loading…');
     try {
-      const rows = await sbGet(`/bus_bookings?pnr=eq.${encodeURIComponent(pnr)}&limit=1`);
-      if (!rows.length) {
-        $('lookup-result').innerHTML = `<div class="empty-state"><p>No booking found for PNR <strong>${pnr}</strong></p></div>`;
-        return;
+      const { data: { session } } = await sbClient.auth.getSession();
+      if (session && session.user) {
+        state.user = session.user;
+        await loadMyBookings();
+      } else {
+        showAuthStep('email');
       }
-      state.booking = rows[0];
-      renderTicket(rows[0]);
-      // move ticket markup into lookup view
-      $('lookup-result').innerHTML = $('ticket-card').outerHTML;
     } catch (err) {
       console.error(err);
-      toast('Lookup failed.', true);
+      showAuthStep('email');
+    } finally {
+      overlay(false);
+    }
+  }
+
+  // Toggle which of the three login steps is visible.
+  function showAuthStep(step) {
+    $('mb-email-step').hidden = step !== 'email';
+    $('mb-code-step').hidden  = step !== 'code';
+    $('mb-list-step').hidden  = step !== 'list';
+  }
+
+  // Step 1 — email the user a one-time code.
+  async function sendCode(e) {
+    if (e) e.preventDefault();
+    const email = $('mb-email').value.trim();
+    if (!email) return;
+    overlay(true, 'Sending your code…');
+    try {
+      const { error } = await sbClient.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: true }
+      });
+      if (error) throw error;
+      state.pendingEmail = email;
+      $('mb-email-echo').textContent = email;
+      $('mb-code').value = '';
+      showAuthStep('code');
+      toast('Code sent to ' + email);
+    } catch (err) {
+      console.error(err);
+      toast('Could not send code: ' + err.message, true);
+    } finally {
+      overlay(false);
+    }
+  }
+
+  // Step 2 — verify the code and open the session.
+  async function verifyCode(e) {
+    if (e) e.preventDefault();
+    const token = $('mb-code').value.trim();
+    const email = state.pendingEmail;
+    if (!token || !email) return;
+    overlay(true, 'Verifying…');
+    try {
+      const { data, error } = await sbClient.auth.verifyOtp({ email, token, type: 'email' });
+      if (error) throw error;
+      state.user = data.user;
+      toast('Signed in');
+      await loadMyBookings();
+    } catch (err) {
+      console.error(err);
+      toast('Invalid or expired code. Please try again.', true);
+    } finally {
+      overlay(false);
+    }
+  }
+
+  function backToEmail() { showAuthStep('email'); }
+
+  async function signOut() {
+    await sbClient.auth.signOut();
+    state.user = null;
+    state.myBookings = [];
+    state.booking = null;
+    showAuthStep('email');
+    toast('Signed out');
+  }
+
+  // Fetch the signed-in user's bookings (RLS returns only their own rows).
+  async function loadMyBookings() {
+    showAuthStep('list');
+    $('mb-user-email').textContent = (state.user && state.user.email) || '';
+    $('mb-bookings').innerHTML = '<p class="muted">Loading your tickets…</p>';
+    $('mb-detail').innerHTML = '';
+    try {
+      const { data, error } = await sbClient
+        .from('bus_bookings')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      state.myBookings = data || [];
+      renderMyBookingsList();
+    } catch (err) {
+      console.error(err);
+      $('mb-bookings').innerHTML =
+        `<div class="empty-state"><p>Could not load your tickets.<br><span class="muted small">${err.message}</span></p></div>`;
+    }
+  }
+
+  function renderMyBookingsList() {
+    const list = state.myBookings;
+    if (!list.length) {
+      $('mb-bookings').innerHTML =
+        `<div class="empty-state"><h3>No tickets yet</h3><p>Bookings made with this email will appear here.</p></div>`;
+      return;
+    }
+    $('mb-bookings').innerHTML = list.map(b => {
+      const cancelled = b.status === 'CANCELLED';
+      return `<div class="mb-card${cancelled ? ' is-cancelled' : ''}">
+        <div class="mb-card-main">
+          <div class="mb-route">${b.source_city} → ${b.destination_city}</div>
+          <div class="mb-meta">${prettyDate(b.journey_date)} · ${b.departure_time} · ${(b.seats || []).length} seat(s)</div>
+          <div class="mb-sub muted">PNR ${b.pnr} · ${b.operator}</div>
+        </div>
+        <div class="mb-card-side">
+          <span class="mb-status ${cancelled ? 'cancelled' : 'confirmed'}">${b.status}</span>
+          <button class="primary-btn" onclick="App.viewMyBooking('${b.pnr}')">View</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Open one ticket from the list.
+  function viewMyBooking(pnr) {
+    const b = state.myBookings.find(x => x.pnr === pnr);
+    if (!b) return;
+    state.booking = b;
+    renderMyTicket(b);
+    $('mb-detail').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  /* ---------------- Cancellation ---------------- */
+
+  // Combine journey date + departure time into a Date for the trip's start.
+  function departureDate(b) {
+    const time = (b.departure_time && /^\d{1,2}:\d{2}/.test(b.departure_time)) ? b.departure_time : '00:00';
+    return new Date(b.journey_date + 'T' + time + ':00');
+  }
+
+  // Tiered refund policy based on how long before departure the booking is cancelled.
+  function cancellationInfo(b) {
+    const total = Number(b.total_fare) || 0;
+    const hours = (departureDate(b) - new Date()) / 36e5;
+    let pct;
+    if (hours >= 24)      pct = 90;   // > 1 day before: 10% charge
+    else if (hours >= 12) pct = 70;
+    else if (hours >= 4)  pct = 50;
+    else                  pct = 0;    // < 4h before / departed: no refund
+    const refund = Math.round(total * pct / 100);
+    return { hours, pct, total, refund, charge: total - refund, departed: hours <= 0 };
+  }
+
+  // Render the selected ticket into the detail area, with download + cancel.
+  function renderMyTicket(b) {
+    renderTicket(b);
+    let notice = '';
+    const buttons = [`<button class="primary-btn" onclick="App.downloadTicket()">⬇ Download Ticket (PDF)</button>`];
+
+    if (b.status === 'CANCELLED') {
+      const refundTxt = (b.refund_amount != null) ? ' Refund of ' + rupee(b.refund_amount) + ' is being processed.' : '';
+      notice = `<div class="cancel-note">This booking has been cancelled.${refundTxt}</div>`;
+    } else {
+      const info = cancellationInfo(b);
+      if (info.departed) {
+        notice = `<p class="muted small cancel-info">This journey has already departed — the booking can no longer be cancelled.</p>`;
+      } else {
+        buttons.push(`<button class="danger-btn" onclick="App.cancelBooking()">Cancel Booking</button>`);
+      }
+    }
+
+    const actions = `<div class="cancel-box">${buttons.join('')}</div>`;
+    $('mb-detail').innerHTML = '<h3 class="mb-detail-title">Ticket details</h3>'
+      + $('ticket-card').outerHTML + notice + actions;
+  }
+
+  // Show the refund breakdown and ask the user to confirm.
+  function cancelBooking() {
+    const b = state.booking;
+    if (!b || b.status !== 'CONFIRMED') return;
+    const info = cancellationInfo(b);
+    $('mb-detail').innerHTML = `
+      <div class="cancel-confirm side-card">
+        <h3>Cancel this booking?</h3>
+        <p class="muted small">PNR ${b.pnr} · ${b.source_city} → ${b.destination_city} · ${prettyDate(b.journey_date)} · ${b.departure_time}</p>
+        <div class="refund-rows">
+          <div class="fare-row"><span>Total Paid</span><span>${rupee(info.total)}</span></div>
+          <div class="fare-row"><span>Cancellation Charge (${100 - info.pct}%)</span><span>− ${rupee(info.charge)}</span></div>
+          <div class="fare-row total"><span>Refund Amount</span><span>${rupee(info.refund)}</span></div>
+        </div>
+        <p class="muted small">Refund (demo) is credited to the original payment method within 5–7 business days. This action cannot be undone.</p>
+        <div class="cancel-box">
+          <button class="ghost-btn" onclick="App.keepBooking()">Keep My Booking</button>
+          <button class="danger-btn" onclick="App.confirmCancel()">Yes, Cancel &amp; Refund</button>
+        </div>
+      </div>`;
+  }
+
+  // User backed out of the cancellation — restore the ticket view.
+  function keepBooking() {
+    if (state.booking) renderMyTicket(state.booking);
+  }
+
+  // Commit the cancellation through the authenticated client (RLS enforces
+  // that a user can only cancel their own booking).
+  async function confirmCancel() {
+    const b = state.booking;
+    if (!b || b.status !== 'CONFIRMED') return;
+    const info = cancellationInfo(b);
+    overlay(true, 'Cancelling your booking…');
+    try {
+      const { data, error } = await sbClient
+        .from('bus_bookings')
+        .update({
+          status: 'CANCELLED',
+          cancelled_at: new Date().toISOString(),
+          refund_amount: info.refund
+        })
+        .eq('pnr', b.pnr)
+        .eq('status', 'CONFIRMED')
+        .select();
+      if (error) throw error;
+      const updated = (data && data[0]) || { ...b, status: 'CANCELLED', refund_amount: info.refund };
+      state.booking = updated;
+      const idx = state.myBookings.findIndex(x => x.pnr === b.pnr);
+      if (idx >= 0) state.myBookings[idx] = updated;
+      renderMyBookingsList();
+      renderMyTicket(updated);
+      toast('Booking cancelled. Refund ' + rupee(info.refund) + ' initiated.');
+    } catch (err) {
+      console.error(err);
+      toast('Cancellation failed: ' + err.message, true);
     } finally {
       overlay(false);
     }
@@ -743,7 +991,9 @@
   window.App = {
     search, setDate, swapCities, applyFilters,
     selectBus, toggleSeat, toPassengerDetails, toPayment, confirmBooking,
-    printTicket, downloadTicket, openLookup, lookupPNR,
+    printTicket, downloadTicket,
+    openMyBookings, sendCode, verifyCode, backToEmail, signOut, viewMyBooking,
+    cancelBooking, confirmCancel, keepBooking,
     goHome, backToResults, backToSeats
   };
 

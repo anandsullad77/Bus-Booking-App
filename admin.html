@@ -109,19 +109,35 @@
 </head>
 <body>
 
-  <!-- ================= LOGIN GATE ================= -->
+  <!-- ================= LOGIN GATE (email one-time code) ================= -->
   <div class="gate" id="gate">
     <div class="gate-card">
       <div class="gate-logo">MS</div>
       <h1>Admin Dashboard</h1>
-      <p>Enter the admin password to continue.</p>
-      <form id="gate-form">
-        <input type="password" id="gate-pass" placeholder="Password" autocomplete="off" autofocus />
-        <div class="gate-err" id="gate-err"></div>
-        <button type="submit">Unlock</button>
-      </form>
-      <p class="gate-note">⚠️ This is a basic client-side gate, not full security.
-        For production use Supabase Auth + Row-Level Security.</p>
+
+      <!-- Step 1 — admin email -->
+      <div id="gate-email-step">
+        <p>Sign in with the admin email. We'll send you a one-time code.</p>
+        <form id="gate-email-form">
+          <input type="email" id="gate-email" placeholder="admin email" autocomplete="email" autofocus />
+          <div class="gate-err" id="gate-err"></div>
+          <button type="submit">Send Code</button>
+        </form>
+      </div>
+
+      <!-- Step 2 — code -->
+      <div id="gate-code-step" hidden>
+        <p>Enter the code sent to <strong id="gate-email-echo"></strong>.</p>
+        <form id="gate-code-form">
+          <input type="text" id="gate-code" inputmode="numeric" pattern="[0-9]*" maxlength="10" placeholder="Enter code" />
+          <div class="gate-err" id="gate-err2"></div>
+          <button type="submit">Verify &amp; Enter</button>
+        </form>
+        <p class="gate-note"><a href="#" id="gate-back">← Use a different email</a></p>
+      </div>
+
+      <p class="gate-note">🔒 Secured by Supabase Auth. Only the registered
+        admin email can view bookings.</p>
     </div>
   </div>
 
@@ -197,6 +213,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="admin.js"></script>
 </body>
 </html>
