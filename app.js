@@ -31,20 +31,75 @@
     booking: null,        // final / currently viewed booking record
     user: null,           // signed-in user (My Bookings)
     pendingEmail: '',     // email awaiting code verification
-    myBookings: []        // bookings for the signed-in user
+    myBookings: [],       // bookings for the signed-in user
+    activeRoutes: [],     // all active routes (for city list + popular routes)
+    holdTimer: null,      // seat-hold countdown interval
+    holdExpiresAt: 0,     // epoch ms when the current seat selection "expires"
+    holdToken: null,      // server-side seat-hold token for this selection
+    activeDeck: 0,        // which deck is shown (sleeper Lower/Upper toggle)
+    afterAuth: null       // callback to resume after checkout sign-in
   };
 
-  const CITIES = ['Bangalore', 'Hyderabad', 'Mumbai', 'Pune', 'Goa', 'Chennai', 'Delhi', 'Coimbatore', 'Mangalore', 'Hubli'];
+  // Fallback only — the real city list is derived from active routes at init so
+  // we never suggest a city we don't actually serve.
+  const CITIES = ['Bangalore', 'Hyderabad', 'Mumbai', 'Pune', 'Goa', 'Chennai'];
 
   /* ---------------- Helpers ---------------- */
   const $  = (id) => document.getElementById(id);
   const rupee = (n) => '₹' + Number(n).toLocaleString('en-IN');
 
+  // GST is assumed included @5% (matches the e-ticket PDF math). Split a gross
+  // total into base + tax for a transparent, pre-payment fare breakdown.
+  function fareBreakdown(total) {
+    const t = Number(total) || 0;
+    const base = Math.round(t / 1.05);
+    return { base, gst: t - base, total: t };
+  }
+
+  function fareBreakdownHtml(seatCount, fare) {
+    const total = seatCount * Number(fare);
+    const { base, gst } = fareBreakdown(total);
+    return `
+      <div class="fare-row"><span>Base fare (${seatCount} × ${rupee(fare)})</span><span>${rupee(base)}</span></div>
+      <div class="fare-row"><span>GST (5%, incl.)</span><span>${rupee(gst)}</span></div>
+      <div class="fare-row total"><span>Total payable</span><span>${rupee(total)}</span></div>`;
+  }
+
+  // Pre-purchase refund window, computed from this route's departure on the
+  // chosen journey date (mirrors the post-booking cancellationInfo tiers).
+  function preCancelPolicyHtml(route, dateStr) {
+    if (!route || !dateStr) return '';
+    const time = /^\d{1,2}:\d{2}/.test(route.departure_time) ? route.departure_time : '00:00';
+    const dep = new Date(dateStr + 'T' + time + ':00');
+    const cutoff = new Date(dep.getTime() - 24 * 36e5);
+    const when = cutoff.toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return `<span class="cancel-policy-icon">↩</span> Cancel by <strong>${when}</strong> for a 90% refund · <a href="#" onclick="App.openHelp();return false;">full policy</a>`;
+  }
+
   function showView(id) {
+    // close the mobile filter sheet on any navigation
+    const f = $('filters'); if (f) f.classList.remove('open', 'mode-sort', 'mode-filter');
+    const fb = $('filters-backdrop'); if (fb) fb.hidden = true;
+    document.body.classList.remove('sheet-open');
+
     document.querySelectorAll('.view, .hero').forEach(v => v.hidden = true);
     const el = $(id);
     if (el) el.hidden = false;
+    document.body.setAttribute('data-view', id);   // drives bottom-nav visibility/active state
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    // move focus to the view's heading so screen-reader / keyboard users land in
+    // the new content instead of being stranded at the top of the old view.
+    if (el) {
+      const h = el.querySelector('h1, h2');
+      if (h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+    }
+  }
+
+  // Skip-link target: focus the heading of whatever view is currently shown.
+  function skipToContent() {
+    const v = document.querySelector('.view:not([hidden]), .hero:not([hidden])');
+    const h = v && v.querySelector('h1, h2');
+    if (h) { h.setAttribute('tabindex', '-1'); h.focus(); }
   }
 
   function overlay(show, text) {
@@ -105,17 +160,112 @@
 
   /* ---------------- Init ---------------- */
   function init() {
-    // city datalist
-    const dl = $('city-list');
-    dl.innerHTML = CITIES.map(c => `<option value="${c}">`).join('');
+    document.body.setAttribute('data-view', 'view-hero');
     // default date = today
     $('journey-date').value = todayStr(0);
     $('journey-date').min = todayStr(0);
+    // seed the datalist with the fallback list, then refine from live inventory
+    setCityList(CITIES);
+    loadActiveRoutes();
+    renderDateStrip();
+    $('journey-date').addEventListener('change', syncDateStrip);
+  }
+
+  // Build a swipeable strip of the next 14 days; tapping one sets the date.
+  function renderDateStrip() {
+    const strip = $('date-strip');
+    if (!strip) return;
+    const cur = $('journey-date').value;
+    strip.innerHTML = Array.from({ length: 14 }).map((_, i) => {
+      const ds = todayStr(i);
+      const d = new Date(ds + 'T00:00:00');
+      const dow = d.toLocaleDateString('en-IN', { weekday: 'short' });
+      const lbl = i === 0 ? 'Today' : (i === 1 ? 'Tom' : dow);
+      const mon = d.toLocaleDateString('en-IN', { month: 'short' });
+      return `<button type="button" class="ds-day${ds === cur ? ' active' : ''}" data-date="${ds}"
+        aria-pressed="${ds === cur}" onclick="App.pickDate('${ds}')">
+        <span class="ds-dow">${lbl}</span><span class="ds-num">${d.getDate()}</span><span class="ds-mon">${mon}</span>
+      </button>`;
+    }).join('');
+  }
+
+  function pickDate(ds) {
+    $('journey-date').value = ds;
+    syncDateStrip();
+  }
+
+  // Reflect the current #journey-date value as the active strip cell.
+  function syncDateStrip() {
+    const cur = $('journey-date').value;
+    document.querySelectorAll('#date-strip .ds-day').forEach(b => {
+      const on = b.getAttribute('data-date') === cur;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on);
+    });
+  }
+
+  // Pull every active route once so the city autocomplete and the "popular
+  // routes" chips reflect inventory we can actually fulfil (no phantom cities).
+  async function loadActiveRoutes() {
+    try {
+      const rows = await sbGet('/bus_routes?is_active=eq.true'
+        + '&select=source_city,destination_city,fare&order=fare.asc');
+      state.activeRoutes = Array.isArray(rows) ? rows : [];
+      const cities = [...new Set(
+        state.activeRoutes.flatMap(r => [r.source_city, r.destination_city])
+      )].sort();
+      if (cities.length) setCityList(cities);
+      renderPopularRoutes();
+    } catch (err) {
+      console.warn('Could not load active routes (using fallback city list):', err);
+    }
+  }
+
+  function setCityList(cities) {
+    $('city-list').innerHTML = cities.map(c => `<option value="${c}">`).join('');
+  }
+
+  // Render up to 6 cheapest distinct routes as one-tap chips in the hero.
+  function renderPopularRoutes() {
+    const seen = new Set();
+    const routes = [];
+    for (const r of state.activeRoutes) {
+      const key = r.source_city + '→' + r.destination_city;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      routes.push(r);
+      if (routes.length >= 6) break;
+    }
+    const wrap = $('popular-routes');
+    if (!routes.length) { wrap.hidden = true; return; }
+    $('popular-chips').innerHTML = routes.map(r =>
+      `<button type="button" class="route-chip"
+         onclick="App.quickSearch('${r.source_city}','${r.destination_city}')">
+         ${r.source_city} → ${r.destination_city}
+         <span class="route-chip-fare">${rupee(r.fare)}</span>
+       </button>`).join('');
+    wrap.hidden = false;
+  }
+
+  // Prefill the search form from a chip and run the search immediately.
+  function quickSearch(from, to) {
+    $('from-city').value = from;
+    $('to-city').value = to;
+    if (!$('journey-date').value) $('journey-date').value = todayStr(0);
+    goHome();
+    search();
+  }
+
+  // Days from today until the upcoming weekend (Saturday). Used by the chip.
+  function daysToWeekend() {
+    const day = new Date().getDay();            // 0 Sun … 6 Sat
+    return day === 6 ? 0 : (6 - day);
   }
 
   /* ---------------- Search ---------------- */
   function setDate(offset) {
     $('journey-date').value = todayStr(offset);
+    syncDateStrip();
   }
 
   function swapCities() {
@@ -133,7 +283,7 @@
     if (from.toLowerCase() === to.toLowerCase()) { toast('Source and destination cannot be the same', true); return; }
 
     state.search = { from, to, date };
-    overlay(true, 'Searching buses…');
+    showResultsSkeleton();                 // jump to results with placeholders, no blank overlay
     try {
       // case-insensitive match on source + destination, active only
       const q = `/bus_routes?is_active=eq.true`
@@ -142,17 +292,61 @@
         + `&order=departure_time.asc`;
       state.allRoutes = await sbGet(q);
       state.filtered = state.allRoutes.slice();
+      renderAmenityFilters();
       renderResults();
-      showView('view-results');
     } catch (err) {
       console.error(err);
-      toast('Could not load buses. Check Supabase setup / network.', true);
-    } finally {
-      overlay(false);
+      $('results-meta').textContent = '';
+      $('results-list').innerHTML = `<div class="empty-state">
+        <h3>Couldn't load buses</h3>
+        <p>Please check your connection and try again.</p>
+        <button class="primary-btn" onclick="App.search()">Retry</button>
+        <p class="muted small" style="margin-top:14px"><a href="#" onclick="App.openHelp();return false;">Contact support</a></p>
+      </div>`;
     }
   }
 
+  // Placeholder bus-cards while the search request is in flight (no full-screen
+  // overlay — the user sees the results shell immediately).
+  function showResultsSkeleton() {
+    const { from, to } = state.search;
+    $('results-route').textContent = `${from} → ${to}`;
+    $('results-meta').textContent = 'Searching…';
+    $('results-list').innerHTML = Array.from({ length: 4 }).map(() => `
+      <div class="bus-card skeleton-card" aria-hidden="true">
+        <div class="bus-main">
+          <div class="sk sk-line w40"></div>
+          <div class="sk sk-line w25"></div>
+          <div class="sk sk-line w70"></div>
+          <div class="sk sk-line w55"></div>
+        </div>
+        <div class="bus-side">
+          <div class="sk sk-pill"></div>
+          <div class="sk sk-line w30"></div>
+          <div class="sk sk-btn"></div>
+        </div>
+      </div>`).join('');
+    showView('view-results');
+  }
+
+  // Placeholder seat grid while booked seats load.
+  function showSeatSkeleton(route) {
+    $('seats-title').textContent = `Select Seats — ${route.operator}`;
+    $('seats-sub').textContent = `${state.search.from} → ${state.search.to} · ${prettyDate(state.search.date)} · ${route.bus_type}`;
+    const rows = Array.from({ length: 6 }).map(() =>
+      `<div class="deck-row">${Array.from({ length: 4 }).map(() => '<div class="sk sk-seat"></div>').join('')}</div>`).join('');
+    $('seat-map').innerHTML = `<div class="deck"><div class="sk sk-line w30" style="margin-bottom:14px"></div><div class="deck-grid">${rows}</div></div>`;
+    showView('view-seats');
+  }
+
   /* ---------------- Results ---------------- */
+  // Convert a "08h 30m" / "8h30" style string into total minutes for sorting.
+  function durationMinutes(s) {
+    const m = String(s || '').match(/(\d+)\s*h.*?(\d+)?\s*m?/i);
+    if (!m) return 1e9;
+    return parseInt(m[1], 10) * 60 + (m[2] ? parseInt(m[2], 10) : 0);
+  }
+
   function renderResults() {
     const { from, to, date } = state.search;
     $('results-route').textContent = `${from} → ${to}`;
@@ -160,16 +354,18 @@
 
     const list = $('results-list');
     if (!state.filtered.length) {
-      list.innerHTML = `<div class="empty-state">
-        <h3>No buses found</h3>
-        <p>Try another route or date. (Seeded routes include Bangalore↔Hyderabad, Mumbai↔Pune, Bangalore↔Goa, Bangalore→Chennai.)</p>
-      </div>`;
+      list.innerHTML = renderEmptyResults();
       return;
     }
 
     list.innerHTML = state.filtered.map((r, i) => {
       const amen = (r.amenities || []).slice(0, 4)
         .map(a => `<span class="amenity-tag">${a}</span>`).join('');
+      const bp = (r.boarding_points || [])[0];
+      const dp = (r.dropping_points || [])[0];
+      const points = (bp || dp)
+        ? `<div class="bus-points muted small">Boards ${bp ? bp.name + ' ' + bp.time : '—'} · Drops ${dp ? dp.name : '—'}</div>`
+        : '';
       return `<div class="bus-card">
         <div class="bus-main">
           <div class="bus-operator">${r.operator}</div>
@@ -180,21 +376,91 @@
             <div class="bus-time">${r.arrival_time}<small>${r.destination_city}</small></div>
           </div>
           <div class="bus-amenities">${amen}</div>
+          ${points}
+          <div class="bus-cancel muted small">Cancel up to 24h before for a 90% refund</div>
         </div>
         <div class="bus-side">
           <span class="bus-rating">★ ${r.rating}</span>
-          <div class="bus-fare">${rupee(r.fare)}<small> onwards</small></div>
-          <button class="select-seat-btn" onclick="App.selectBus(${i})">Select Seats</button>
+          <div class="bus-fare">${rupee(r.fare)}<small> / seat</small></div>
+          <div class="bus-seats-left" data-seats-left="${r.id}">Checking seats…</div>
+          <button class="select-seat-btn" onclick="App.selectBus(${i})">Select seats</button>
         </div>
       </div>`;
     }).join('');
+
+    loadSeatsLeft();
+  }
+
+  // Turn the "no buses" dead-end into a recovery surface: real routes as chips.
+  function renderEmptyResults() {
+    const { from, to } = state.search;
+    const seen = new Set();
+    const chips = [];
+    for (const r of state.activeRoutes) {
+      const key = r.source_city + '→' + r.destination_city;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      chips.push(`<button type="button" class="route-chip"
+        onclick="App.quickSearch('${r.source_city}','${r.destination_city}')">
+        ${r.source_city} → ${r.destination_city}
+        <span class="route-chip-fare">${rupee(r.fare)}</span></button>`);
+      if (chips.length >= 8) break;
+    }
+    const chipHtml = chips.length
+      ? `<p>Here are routes we run right now:</p><div class="popular-chips center">${chips.join('')}</div>`
+      : '';
+    return `<div class="empty-state">
+      <h3>We don't run ${from} → ${to} yet</h3>
+      ${chipHtml}
+      <p class="muted small" style="margin-top:18px">Want this route? <a href="#" onclick="App.openHelp();return false;">Tell us</a> and we'll notify you when it opens.</p>
+    </div>`;
+  }
+
+  // Fetch booked-seat counts per visible route and fill in the "N seats left"
+  // badges. Best-effort and non-blocking — the list already rendered.
+  async function loadSeatsLeft() {
+    await Promise.all(state.filtered.map(async (r) => {
+      try {
+        const seats = await sbRpc('booked_seats', { p_route_id: r.id, p_journey_date: state.search.date });
+        const booked = Array.isArray(seats) ? seats.length : 0;
+        r._seatsLeft = Math.max(0, Number(r.total_seats || 0) - booked);
+      } catch (_) { r._seatsLeft = null; }
+      const el = document.querySelector(`[data-seats-left="${r.id}"]`);
+      if (!el) return;
+      if (r._seatsLeft == null) { el.textContent = ''; return; }
+      if (r._seatsLeft === 0) { el.textContent = 'Sold out'; el.className = 'bus-seats-left sold-out'; return; }
+      const urgent = r._seatsLeft <= 5;
+      el.textContent = `${r._seatsLeft} seat${r._seatsLeft === 1 ? '' : 's'} left`;
+      el.className = 'bus-seats-left' + (urgent ? ' urgent' : '');
+    }));
+  }
+
+  function onPriceInput() {
+    const v = $('f-price').value;
+    $('f-price-val').textContent = Number(v) >= 2000 ? 'Up to ₹2,000+' : 'Up to ' + rupee(v);
+  }
+
+  // Build the amenity checkboxes from the amenities actually present in results.
+  function renderAmenityFilters() {
+    const wrap = $('amenity-options');
+    if (!wrap) return;
+    const set = new Set();
+    state.allRoutes.forEach(r => (r.amenities || []).forEach(a => set.add(a)));
+    const opts = [...set].sort();
+    wrap.innerHTML = opts.length
+      ? opts.map(a => `<label><input type="checkbox" class="f-amenity" value="${a}" onchange="App.applyFilters()"> ${a}</label>`).join('')
+      : '<span class="muted small">No amenity data</span>';
   }
 
   function applyFilters() {
     const types = [...document.querySelectorAll('.f-type:checked')].map(c => c.value);
     const times = [...document.querySelectorAll('.f-time:checked')].map(c => c.value);
+    const amens = [...document.querySelectorAll('.f-amenity:checked')].map(c => c.value);
+    const maxPrice = Number(($('f-price') || {}).value || 1e9);
+    const minRating = Number((document.querySelector('.f-rating:checked') || {}).value || 0);
+    const sortBy = ($('sort-by') || {}).value || 'departure';
 
-    state.filtered = state.allRoutes.filter(r => {
+    let rows = state.allRoutes.filter(r => {
       // bus type filter
       if (types.length) {
         const bt = r.bus_type.toLowerCase();
@@ -211,8 +477,25 @@
         const slot = h < 12 ? 'morning' : (h < 18 ? 'evening' : 'night');
         if (!times.includes(slot)) return false;
       }
+      // amenities: route must offer every selected amenity
+      if (amens.length && !amens.every(a => (r.amenities || []).includes(a))) return false;
+      if (Number(r.fare) > maxPrice && maxPrice < 2000) return false;
+      if (Number(r.rating) < minRating) return false;
       return true;
     });
+
+    rows.sort((a, b) => {
+      switch (sortBy) {
+        case 'price-asc':  return a.fare - b.fare;
+        case 'price-desc': return b.fare - a.fare;
+        case 'duration':   return durationMinutes(a.duration) - durationMinutes(b.duration);
+        case 'rating':     return b.rating - a.rating;
+        case 'seats':      return (b._seatsLeft ?? -1) - (a._seatsLeft ?? -1);
+        default:           return a.departure_time.localeCompare(b.departure_time);
+      }
+    });
+
+    state.filtered = rows;
     renderResults();
   }
 
@@ -220,7 +503,8 @@
   async function selectBus(i) {
     state.route = state.filtered[i];
     state.selected = [];
-    overlay(true, 'Loading seat map…');
+    await releaseHold();                   // free any prior holds before re-reading availability
+    showSeatSkeleton(state.route);         // show the seat shell immediately
     try {
       // which seats are already booked for this route on this date?
       const seats = await sbRpc('booked_seats', {
@@ -232,12 +516,10 @@
       renderSeatMap();
       renderBoardingDropping();
       updateSeatSummary();
-      showView('view-seats');
     } catch (err) {
       console.error(err);
-      toast('Could not load seats.', true);
-    } finally {
-      overlay(false);
+      toast('Could not load seats. Please try again.', true);
+      backToResults();
     }
   }
 
@@ -246,6 +528,11 @@
     const r = state.route;
     const bt = r.bus_type.toLowerCase();
     const isSleeper = bt.includes('sleeper');
+    // Ladies seats are data-driven: a route may carry a `ladies_seats` array of
+    // seat ids. When absent, there are simply no ladies seats (and the legend is
+    // hidden) — no more advertising a state that can never occur.
+    state.ladiesSeats = new Set(Array.isArray(r.ladies_seats) ? r.ladies_seats : []);
+    state.activeDeck = 0;            // default to the first (Lower) deck
     state.layout = isSleeper ? buildSleeper(r.total_seats) : buildSeater(r.total_seats);
 
     $('seats-title').textContent = `Select Seats — ${r.operator}`;
@@ -296,30 +583,65 @@
     return {
       id,
       label: String(label),
-      ladies: false,                 // could flag specific seats as ladies-only
+      ladies: state.ladiesSeats ? state.ladiesSeats.has(id) : false,
       booked: state.bookedSeats.includes(id)
     };
   }
 
-  function renderSeatMap() {
-    const map = $('seat-map');
-    map.innerHTML = state.layout.map(deck => {
-      const rowsHtml = deck.rows.map(row => {
-        const cells = row.map(seat => {
-          const cls = ['seat'];
-          if (deck.sleeper) cls.push('sleeper');
-          if (seat.ladies) cls.push('ladies');
-          if (seat.booked) cls.push('booked');
-          else if (state.selected.includes(seat.id)) cls.push('selected');
-          const onclick = seat.booked ? '' : `onclick="App.toggleSeat('${seat.id}')"`;
-          const spacer = seat._right ? '<span style="width:28px;display:inline-block"></span>' : '';
-          return `${spacer}<div class="${cls.join(' ')}" data-seat="${seat.id}" ${onclick} title="Seat ${seat.label} · ${rupee(state.route.fare)}">${seat.label}</div>`;
-        }).join('');
-        return `<div class="deck-row">${cells}</div>`;
+  // Render a single deck's seats (used for the active deck or a single-deck bus).
+  function renderDeck(deck, withTitle) {
+    const rowsHtml = deck.rows.map(row => {
+      const cells = row.map(seat => {
+        const cls = ['seat'];
+        if (deck.sleeper) cls.push('sleeper');
+        if (seat.ladies) cls.push('ladies');
+        const selected = !seat.booked && state.selected.includes(seat.id);
+        if (seat.booked) cls.push('booked');
+        else if (selected) cls.push('selected');
+        // Status conveyed by text + icon (::after), not colour alone.
+        const status = seat.booked ? 'booked' : (selected ? 'selected' : 'available');
+        const label = `Seat ${seat.label}${seat.ladies ? ', ladies' : ''}, ${rupee(state.route.fare)}, ${status}`;
+        const onclick = seat.booked ? '' : `onclick="App.toggleSeat('${seat.id}')"`;
+        const spacer = seat._right ? '<span class="aisle-spacer" aria-hidden="true"></span>' : '';
+        return `${spacer}<button type="button" class="${cls.join(' ')}" data-seat="${seat.id}"
+          ${seat.booked ? 'disabled aria-disabled="true"' : `aria-pressed="${selected}"`}
+          aria-label="${label}" title="${label}" ${onclick}>${seat.label}</button>`;
       }).join('');
-      const steer = deck.sleeper ? '' : '<div class="deck-row" style="justify-content:flex-end"><span class="steering">🛞</span></div>';
-      return `<div class="deck"><div class="deck-title">${deck.name}</div>${steer}<div class="deck-grid">${rowsHtml}</div></div>`;
+      return `<div class="deck-row">${cells}</div>`;
     }).join('');
+    const steer = deck.sleeper ? '' : '<div class="deck-row" style="justify-content:flex-end"><span class="steering">🛞</span></div>';
+    const title = withTitle ? `<div class="deck-title">${deck.name}</div>` : '';
+    return `<div class="deck">${title}${steer}<div class="deck-grid">${rowsHtml}</div></div>`;
+  }
+
+  function renderSeatMap() {
+    // Only show the "Ladies" legend if this bus actually has ladies seats.
+    const hasLadies = state.layout.some(d => d.rows.some(row => row.some(s => s.ladies)));
+    const ll = $('legend-ladies');
+    if (ll) ll.hidden = !hasLadies;
+
+    const decks = state.layout;
+    const multi = decks.length > 1;
+    if (state.activeDeck == null || state.activeDeck >= decks.length) state.activeDeck = 0;
+
+    const map = $('seat-map');
+    if (multi) {
+      // One deck at a time, switchable with tabs (e.g. Lower Deck / Upper Deck).
+      const tabs = `<div class="deck-tabs" role="tablist" aria-label="Choose deck">` + decks.map((d, i) => {
+        const n = d.rows.reduce((a, r) => a + r.filter(s => !s.booked).length, 0);
+        return `<button type="button" class="deck-tab${i === state.activeDeck ? ' active' : ''}"
+          role="tab" aria-selected="${i === state.activeDeck}" onclick="App.switchDeck(${i})">
+          ${d.name}<span class="deck-tab-count">${n} free</span></button>`;
+      }).join('') + `</div>`;
+      map.innerHTML = tabs + renderDeck(decks[state.activeDeck], false);
+    } else {
+      map.innerHTML = decks.map(d => renderDeck(d, false)).join('');
+    }
+  }
+
+  function switchDeck(i) {
+    state.activeDeck = i;
+    renderSeatMap();
   }
 
   function toggleSeat(id) {
@@ -329,8 +651,104 @@
       if (state.selected.length >= 6) { toast('Max 6 seats per booking', true); return; }
       state.selected.push(id);
     }
+    renderSeatMap();        // optimistic
+    updateSeatSummary();
+    syncHold();             // reserve on the server (reconciles conflicts)
+  }
+
+  /* -------- Seat hold (server-backed, with a visible countdown) --------
+     Each selection holds the seats server-side via hold_seats() so a second
+     buyer can't reach payment for the same berth; booked_seats unions live
+     holds. hold_seats clears and re-inserts THIS token's holds, so it reports
+     only seats taken by *others* — no self-greying. */
+  const HOLD_MS = 8 * 60 * 1000;
+  const HOLD_MINUTES = 8;
+
+  function newHoldToken() {
+    return 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  // Serialize hold calls so rapid toggles don't race on the same token.
+  let holdQueue = Promise.resolve();
+  function syncHold() {
+    holdQueue = holdQueue.then(doSyncHold).catch(() => {});
+    return holdQueue;
+  }
+
+  async function doSyncHold() {
+    if (!state.selected.length) { await releaseHold(); return; }
+    if (!state.holdToken) state.holdToken = newHoldToken();
+    try {
+      const res = await sbRpc('hold_seats', {
+        p_route_id: state.route.id,
+        p_journey_date: state.search.date,
+        p_seats: state.selected,
+        p_token: state.holdToken,
+        p_minutes: HOLD_MINUTES
+      });
+      const conflicts = (res && res.conflicts) || [];
+      if (conflicts.length) {
+        state.bookedSeats = [...new Set([...state.bookedSeats, ...conflicts])];
+        state.selected = state.selected.filter(s => !conflicts.includes(s));
+        buildSeatLayout(); renderSeatMap(); updateSeatSummary();
+        toast('Seat ' + conflicts.join(', ') + ' was just taken — please choose another.', true);
+      }
+      if (state.selected.length) startHold(); else stopHold();
+    } catch (err) {
+      // Degrade gracefully: keep the visual timer even if the hold RPC failed.
+      console.warn('hold_seats failed (keeping client timer):', err);
+      if (state.selected.length) startHold();
+    }
+  }
+
+  // Release this session's server holds (and stop the countdown).
+  async function releaseHold() {
+    stopHold();
+    const token = state.holdToken;
+    state.holdToken = null;
+    if (!token) return;
+    try {
+      // release_seats returns void (204) — fetch directly to avoid JSON parsing.
+      await fetch(REST + '/rpc/release_seats', {
+        method: 'POST', headers: HEADERS, body: JSON.stringify({ p_token: token })
+      });
+    } catch (_) { /* best-effort; holds also auto-expire */ }
+  }
+
+  function startHold() {
+    if (!state.holdTimer) {
+      state.holdExpiresAt = Date.now() + HOLD_MS;
+      tickHold();
+      state.holdTimer = setInterval(tickHold, 1000);
+    }
+    $('hold-timer').hidden = false;
+  }
+
+  function tickHold() {
+    const left = state.holdExpiresAt - Date.now();
+    if (left <= 0) { expireHold(); return; }
+    const m = Math.floor(left / 60000);
+    const s = String(Math.floor((left % 60000) / 1000)).padStart(2, '0');
+    $('hold-timer').textContent = `⏳ Seats held for ${m}:${s} — finish before the timer ends`;
+    const sh = $('sab-hold');
+    if (sh) sh.textContent = `⏳ ${m}:${s}`;
+  }
+
+  function stopHold() {
+    if (state.holdTimer) { clearInterval(state.holdTimer); state.holdTimer = null; }
+    state.holdExpiresAt = 0;
+    const t = $('hold-timer');
+    if (t) { t.hidden = true; t.textContent = ''; }
+    const sh = $('sab-hold');
+    if (sh) sh.textContent = '';
+  }
+
+  function expireHold() {
+    releaseHold();
+    state.selected = [];
     renderSeatMap();
     updateSeatSummary();
+    toast('Your seat hold expired — please select your seats again.', true);
   }
 
   function renderBoardingDropping() {
@@ -348,15 +766,57 @@
     $('seat-count').textContent = n;
     $('seat-total').textContent = rupee(total);
     $('to-passenger-btn').disabled = n === 0;
+    // mirror into the mobile sticky action bar
+    const sab = $('sab-summary');
+    if (sab) sab.textContent = n ? `${n} seat${n > 1 ? 's' : ''} · ${rupee(total)}` : 'Select your seats';
+    const sabBtn = $('sab-continue');
+    if (sabBtn) sabBtn.disabled = n === 0;
   }
 
   /* ---------------- Passenger details ---------------- */
+  // Gate the booking behind a verified sign-in. Browsing and seat selection
+  // stay anonymous; the moment we collect passengers we require a verified
+  // email, so every ticket is tied to an identity the buyer can sign back into.
   function toPassengerDetails() {
     if (!state.selected.length) return;
+    ensureSignedIn(proceedToPassengerDetails);
+  }
+
+  async function proceedToPassengerDetails() {
+    if (!state.selected.length) return;
+
+    // Refresh the server hold before collecting details. hold_seats re-reserves
+    // this token's seats and returns only those grabbed by *others* — so a clash
+    // is caught here (cheap) rather than after the whole form at Pay Now.
+    try {
+      const res = await sbRpc('hold_seats', {
+        p_route_id: state.route.id, p_journey_date: state.search.date,
+        p_seats: state.selected, p_token: state.holdToken || (state.holdToken = newHoldToken()),
+        p_minutes: HOLD_MINUTES
+      });
+      const conflicts = (res && res.conflicts) || [];
+      if (conflicts.length) {
+        state.bookedSeats = [...new Set([...state.bookedSeats, ...conflicts])];
+        state.selected = state.selected.filter(s => !conflicts.includes(s));
+        buildSeatLayout(); renderSeatMap(); updateSeatSummary();
+        if (state.selected.length) startHold(); else stopHold();
+        toast('Seat ' + conflicts.join(', ') + ' was just taken — choose another. Your other seats are still held.', true);
+        return;
+      }
+    } catch (_) { /* non-blocking: fall through to the form */ }
+
     const fields = $('passenger-fields');
-    fields.innerHTML = state.selected.map((seat, i) => `
+    fields.innerHTML = state.selected.map((seat, i) => {
+      const isLadies = state.ladiesSeats && state.ladiesSeats.has(seat);
+      const genderField = isLadies
+        ? `<select data-pax="gender" data-seat="${seat}"><option value="F">Female</option></select>
+           <span class="ladies-note">♀ Ladies seat — female travellers only</span>`
+        : `<select data-pax="gender" data-seat="${seat}">
+             <option value="M">Male</option><option value="F">Female</option><option value="O">Other</option>
+           </select>`;
+      return `
       <div class="passenger-block">
-        <h4>Passenger ${i + 1}<span class="seat-badge">Seat ${seat}</span></h4>
+        <h4>Passenger ${i + 1}<span class="seat-badge">Seat ${seat}${isLadies ? ' ♀' : ''}</span></h4>
         <div class="form-grid">
           <div class="form-field">
             <label>Full Name</label>
@@ -368,18 +828,99 @@
           </div>
           <div class="form-field">
             <label>Gender</label>
-            <select data-pax="gender" data-seat="${seat}">
-              <option value="M">Male</option>
-              <option value="F">Female</option>
-              <option value="O">Other</option>
-            </select>
+            ${genderField}
           </div>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
+
+    // Tie the ticket to the verified identity: prefill + lock the contact email.
+    const ce = $('contact-email');
+    if (state.user && state.user.email) {
+      ce.value = state.user.email;
+      ce.readOnly = true;
+      ce.classList.add('locked');
+    }
 
     const total = state.selected.length * Number(state.route.fare);
     $('passenger-total').textContent = rupee(total);
+    $('passenger-breakdown').innerHTML = fareBreakdownHtml(state.selected.length, state.route.fare);
     showView('view-passenger');
+  }
+
+  /* ---------------- Checkout sign-in (email OTP) ---------------- */
+  // Ensure there's a verified session, then run `cb`. If not signed in, open the
+  // auth modal and defer `cb` until verification succeeds.
+  async function ensureSignedIn(cb) {
+    try {
+      const { data: { session } } = await sbClient.auth.getSession();
+      if (session && session.user) { state.user = session.user; cb(); return; }
+    } catch (_) { /* fall through to the modal */ }
+    state.afterAuth = cb;
+    openAuthModal();
+  }
+
+  function openAuthModal() {
+    $('auth-email').value = (state.user && state.user.email) || '';
+    $('auth-email-form').hidden = false;
+    $('auth-code-form').hidden = true;
+    $('auth-overlay').hidden = false;
+    setTimeout(() => $('auth-email').focus(), 50);
+  }
+
+  function cancelAuth() {
+    $('auth-overlay').hidden = true;
+    state.afterAuth = null;
+  }
+
+  function authBackToEmail() {
+    $('auth-email-form').hidden = false;
+    $('auth-code-form').hidden = true;
+  }
+
+  async function checkoutSendCode(e) {
+    if (e) e.preventDefault();
+    const email = $('auth-email').value.trim();
+    if (!email) return;
+    overlay(true, 'Sending your code…');
+    try {
+      const { error } = await sbClient.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+      if (error) throw error;
+      state.pendingEmail = email;
+      $('auth-email-echo').textContent = email;
+      $('auth-code').value = '';
+      $('auth-email-form').hidden = true;
+      $('auth-code-form').hidden = false;
+      setTimeout(() => $('auth-code').focus(), 50);
+    } catch (err) {
+      console.error(err);
+      toast('Could not send code: ' + err.message, true);
+    } finally {
+      overlay(false);
+    }
+  }
+
+  async function checkoutVerifyCode(e) {
+    if (e) e.preventDefault();
+    const token = $('auth-code').value.trim();
+    const email = state.pendingEmail;
+    if (!token || !email) return;
+    overlay(true, 'Verifying…');
+    try {
+      const { data, error } = await sbClient.auth.verifyOtp({ email, token, type: 'email' });
+      if (error) throw error;
+      state.user = data.user;
+      $('auth-overlay').hidden = true;
+      toast('Signed in as ' + email);
+      const cb = state.afterAuth;
+      state.afterAuth = null;
+      if (cb) cb();
+    } catch (err) {
+      console.error(err);
+      toast('Invalid or expired code. Please try again.', true);
+    } finally {
+      overlay(false);
+    }
   }
 
   function collectPassengers() {
@@ -401,6 +942,9 @@
     if (!form.checkValidity()) { form.reportValidity(); return; }
     const total = state.selected.length * Number(state.route.fare);
     $('pay-amount').textContent = rupee(total);
+    $('pay-breakdown').innerHTML = fareBreakdownHtml(state.selected.length, state.route.fare);
+    $('pay-cancel-policy').innerHTML = preCancelPolicyHtml(state.route, state.search.date);
+    $('pay-now-btn').textContent = 'Pay ' + rupee(total);
     showView('view-payment');
   }
 
@@ -412,6 +956,11 @@
   }
 
   async function confirmBooking() {
+    // Defensive: never write a booking without a verified identity.
+    if (!state.user || !state.user.email) {
+      ensureSignedIn(confirmBooking);
+      return;
+    }
     const r = state.route;
     const passengers = collectPassengers();
     const bIdx = $('boarding-select').value || 0;
@@ -433,7 +982,8 @@
       boarding_point: r.boarding_points[bIdx] || null,
       dropping_point: r.dropping_points[dIdx] || null,
       contact_name: $('contact-name').value.trim(),
-      contact_email: $('contact-email').value.trim(),
+      // always the verified sign-in email, so the buyer can retrieve the ticket
+      contact_email: (state.user && state.user.email) || $('contact-email').value.trim(),
       contact_phone: $('contact-phone').value.trim(),
       total_fare: total,
       status: 'CONFIRMED'
@@ -442,46 +992,120 @@
     $('pay-now-btn').disabled = true;
     overlay(true, 'Processing payment…');
     try {
-      // Re-check seat availability to avoid double-booking
-      const fresh = await sbRpc('booked_seats', { p_route_id: r.id, p_journey_date: state.search.date });
-      const taken = Array.isArray(fresh) ? fresh : [];
-      const clash = state.selected.filter(s => taken.includes(s));
-      if (clash.length) {
-        toast('Seats ' + clash.join(', ') + ' were just booked. Please pick again.', true);
-        state.bookedSeats = taken;
-        state.selected = state.selected.filter(s => !taken.includes(s));
-        buildSeatLayout(); renderSeatMap(); updateSeatSummary();
-        showView('view-seats');
-        return;
-      }
-
-      // Save the booking. Anonymous checkout can't read the row back, so we
-      // render the ticket from the object we just built (it has every field).
+      // The DB trigger (prevent_double_booking) is the authoritative guard: it
+      // rejects the insert if any seat was CONFIRMED by someone else, even past
+      // a client race, and consumes our holds on success.
       await sbInsert('bus_bookings', booking);
+      await releaseHold();
       state.booking = booking;
+      rememberBooking(booking);
       renderTicket(state.booking);
       showView('view-ticket');
+      $('pay-now-btn').textContent = 'Pay Now';
       toast('Booking confirmed! PNR ' + state.booking.pnr);
-      sendTicketEmail(state.booking);   // email the e-ticket (non-blocking)
+      sendTicketEmail(state.booking);   // email the e-ticket (updates status line)
     } catch (err) {
       console.error(err);
-      toast('Booking failed: ' + err.message, true);
+      // 23505 / "already booked" => a seat was taken at the last moment.
+      const msg = String(err && err.message || '');
+      if (/already booked|duplicate|23505/i.test(msg)) {
+        toast('One of your seats was just taken — please pick again.', true);
+        try {
+          const fresh = await sbRpc('booked_seats', { p_route_id: r.id, p_journey_date: state.search.date });
+          state.bookedSeats = Array.isArray(fresh) ? fresh : [];
+        } catch (_) {}
+        buildSeatLayout(); renderSeatMap(); updateSeatSummary();
+        showView('view-seats');
+      } else {
+        toast('Something went wrong and your booking didn’t go through. You were not charged — please try again, or call 1800-200-1234.', true);
+      }
     } finally {
       overlay(false);
       $('pay-now-btn').disabled = false;
     }
   }
 
-  // Email the e-ticket via the send-ticket Edge Function. Non-blocking: the
-  // booking already succeeded, so a mail failure must not break the flow.
+  // Keep a local breadcrumb so a returning anonymous buyer can recover the
+  // ticket (My Bookings prefill / "find by PNR") even before any email arrives.
+  function rememberBooking(b) {
+    try {
+      const list = JSON.parse(localStorage.getItem('ms_recent_bookings') || '[]');
+      list.unshift({ pnr: b.pnr, email: b.contact_email, date: b.journey_date,
+        route: b.source_city + ' → ' + b.destination_city });
+      localStorage.setItem('ms_recent_bookings', JSON.stringify(list.slice(0, 10)));
+    } catch (_) { /* storage may be unavailable; non-critical */ }
+  }
+
+  // Email the e-ticket via the send-ticket Edge Function. Non-blocking for the
+  // booking, but we now reflect the real outcome in a status line with a Resend
+  // control, so a silent failure never strands the buyer without a ticket.
   async function sendTicketEmail(b) {
+    const el = $('ticket-email-status');
+    if (el) { el.className = 'email-status sending'; el.textContent = 'Emailing your ticket to ' + b.contact_email + '…'; }
     try {
       const { error } = await sbClient.functions.invoke('send-ticket', { body: { booking: b } });
       if (error) throw error;
-      toast('Ticket emailed to ' + b.contact_email);
+      if (el) { el.className = 'email-status ok'; el.textContent = '✓ Ticket emailed to ' + b.contact_email; }
     } catch (err) {
       console.warn('Ticket email failed (booking still confirmed):', err);
+      if (el) {
+        el.className = 'email-status fail';
+        el.innerHTML = `We couldn't email your ticket to ${b.contact_email}. `
+          + `<button type="button" class="link-btn" onclick="App.resendTicket()">Resend</button> `
+          + `or download it below.`;
+      }
     }
+  }
+
+  function resendTicket() {
+    if (state.booking) sendTicketEmail(state.booking);
+  }
+
+  // Copy the PNR to the clipboard for safe-keeping.
+  function copyPNR() {
+    const pnr = state.booking && state.booking.pnr;
+    if (!pnr) return;
+    const done = () => toast('PNR ' + pnr + ' copied');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(pnr).then(done).catch(done);
+    } else { done(); }
+  }
+
+  // Download an .ics calendar invite for the journey (departure → arrival).
+  function addToCalendar() {
+    const b = state.booking;
+    if (!b) return;
+    const pad = (n) => String(n).padStart(2, '0');
+    const toICS = (dateStr, timeStr) => {
+      const t = /^\d{1,2}:\d{2}/.test(timeStr) ? timeStr : '00:00';
+      const [h, m] = t.split(':');
+      return dateStr.replace(/-/g, '') + 'T' + pad(h) + pad(m) + '00';
+    };
+    const dt = toICS(b.journey_date, b.departure_time);
+    const ics = [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MS Travels//Booking//EN', 'BEGIN:VEVENT',
+      'UID:' + b.pnr + '@mstravels', 'DTSTART:' + dt,
+      'SUMMARY:MS Travels — ' + b.source_city + ' to ' + b.destination_city + ' (PNR ' + b.pnr + ')',
+      'DESCRIPTION:Seats ' + (b.seats || []).join(', ') + '. Reach the boarding point 15 min early.',
+      'LOCATION:' + ((b.boarding_point && b.boarding_point.name) || b.source_city),
+      'END:VEVENT', 'END:VCALENDAR'
+    ].join('\r\n');
+    const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'MS-Travels-' + b.pnr + '.ics';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // Prefill the search with the reverse trip and jump to the home search.
+  function bookReturn() {
+    const b = state.booking;
+    if (!b) { goHome(); return; }
+    goHome();
+    $('from-city').value = b.destination_city;
+    $('to-city').value = b.source_city;
+    $('journey-date').value = todayStr(0);
+    toast('Pick your return date and search');
   }
 
   /* ---------------- Ticket ---------------- */
@@ -684,22 +1308,51 @@
     return host;
   }
 
+  // Lazy-load the PDF/QR/barcode libraries on first use. They are ~0.5MB and
+  // only needed at download time, so we keep them off every other screen.
+  const PDF_LIBS = [
+    'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js',
+    'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js'
+  ];
+  let pdfLibsPromise = null;
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('Failed to load ' + src));
+      document.head.appendChild(s);
+    });
+  }
+  function ensurePdfLibs() {
+    if (typeof window.html2canvas !== 'undefined' && window.jspdf && window.jspdf.jsPDF) {
+      return Promise.resolve();
+    }
+    if (!pdfLibsPromise) pdfLibsPromise = Promise.all(PDF_LIBS.map(loadScript));
+    return pdfLibsPromise;
+  }
+
   // Generate a PDF of the ticket and download it. We render the ticket to a
   // canvas, then place it on an A4 page scaled to FIT (so nothing is clipped).
-  function downloadTicket() {
+  async function downloadTicket() {
     const b = state.booking;
     if (!b) { toast('No ticket to download', true); return; }
     const filename = `MS-Travels-Ticket-${b.pnr || 'ticket'}.pdf`;
 
-    const haveLibs = typeof window.html2canvas !== 'undefined'
-      && window.jspdf && window.jspdf.jsPDF;
-    if (!haveLibs) {
-      toast('Preparing print view…');
+    overlay(true, 'Generating your ticket PDF…');
+    try {
+      await ensurePdfLibs();
+    } catch (err) {
+      console.error(err);
+      overlay(false);
+      toast('Could not load the PDF tools — opening print view instead.', true);
       window.print();
       return;
     }
 
-    overlay(true, 'Generating your ticket PDF…');
     const el = buildPdfTicket(b);
 
     // Small delay so the QR/barcode images paint before we capture.
@@ -820,6 +1473,9 @@
     state.user = null;
     state.myBookings = [];
     state.booking = null;
+    // unlock the checkout contact email for the next (possibly different) user
+    const ce = $('contact-email');
+    if (ce) { ce.readOnly = false; ce.classList.remove('locked'); ce.value = ''; }
     showAuthStep('email');
     toast('Signed out');
   }
@@ -861,7 +1517,7 @@
           <div class="mb-sub muted">PNR ${b.pnr} · ${b.operator}</div>
         </div>
         <div class="mb-card-side">
-          <span class="mb-status ${cancelled ? 'cancelled' : 'confirmed'}">${b.status}</span>
+          <span class="mb-status ${cancelled ? 'cancelled' : 'confirmed'}">${cancelled ? '🔴 Cancelled' : '🟢 Upcoming'}</span>
           <button class="primary-btn" onclick="App.viewMyBooking('${b.pnr}')">View</button>
         </div>
       </div>`;
@@ -935,7 +1591,7 @@
           <div class="fare-row"><span>Cancellation Charge (${100 - info.pct}%)</span><span>− ${rupee(info.charge)}</span></div>
           <div class="fare-row total"><span>Refund Amount</span><span>${rupee(info.refund)}</span></div>
         </div>
-        <p class="muted small">Refund (demo) is credited to the original payment method within 5–7 business days. This action cannot be undone.</p>
+        <p class="muted small">This is a demo — no real money was taken, so this refund is simulated. This action cannot be undone.</p>
         <div class="cancel-box">
           <button class="ghost-btn" onclick="App.keepBooking()">Keep My Booking</button>
           <button class="danger-btn" onclick="App.confirmCancel()">Yes, Cancel &amp; Refund</button>
@@ -953,48 +1609,63 @@
   async function confirmCancel() {
     const b = state.booking;
     if (!b || b.status !== 'CONFIRMED') return;
-    const info = cancellationInfo(b);
     overlay(true, 'Cancelling your booking…');
     try {
-      const { data, error } = await sbClient
-        .from('bus_bookings')
-        .update({
-          status: 'CANCELLED',
-          cancelled_at: new Date().toISOString(),
-          refund_amount: info.refund
-        })
-        .eq('pnr', b.pnr)
-        .eq('status', 'CONFIRMED')
-        .select();
+      // Refund is computed server-side from the server clock + stored fare — the
+      // browser never decides the amount (cancellationInfo is preview only).
+      const { data, error } = await sbClient.rpc('cancel_booking', { p_pnr: b.pnr });
       if (error) throw error;
-      const updated = (data && data[0]) || { ...b, status: 'CANCELLED', refund_amount: info.refund };
+      const updated = Array.isArray(data) ? data[0] : data;
+      if (!updated) throw new Error('No row returned');
       state.booking = updated;
       const idx = state.myBookings.findIndex(x => x.pnr === b.pnr);
       if (idx >= 0) state.myBookings[idx] = updated;
       renderMyBookingsList();
       renderMyTicket(updated);
-      toast('Booking cancelled. Refund ' + rupee(info.refund) + ' initiated.');
+      toast('Booking cancelled. Refund ' + rupee(updated.refund_amount || 0) + ' initiated.');
     } catch (err) {
       console.error(err);
-      toast('Cancellation failed: ' + err.message, true);
+      toast('We couldn’t cancel this booking just now. Please try again, or call 1800-200-1234.', true);
     } finally {
       overlay(false);
     }
   }
 
   /* ---------------- Navigation ---------------- */
-  function goHome() { showView('view-hero'); }
-  function backToResults() { showView('view-results'); }
+  function goHome() { releaseHold(); showView('view-hero'); }
+  function backToResults() { releaseHold(); showView('view-results'); }
   function backToSeats() { showView('view-seats'); }
+  function openHelp() { showView('view-help'); }
+
+  /* -------- Mobile filters bottom sheet -------- */
+  // mode = 'sort' shows only the sort control; 'filter' shows the filter groups.
+  function openFilters(mode) {
+    const f = $('filters');
+    f.classList.remove('mode-sort', 'mode-filter');
+    f.classList.add(mode === 'sort' ? 'mode-sort' : 'mode-filter');
+    $('filters-sheet-title').textContent = mode === 'sort' ? 'Sort by' : 'Filter';
+    f.classList.add('open');
+    f.scrollTop = 0;
+    $('filters-backdrop').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+  function closeFilters() {
+    const f = $('filters');
+    f.classList.remove('open', 'mode-sort', 'mode-filter');
+    $('filters-backdrop').hidden = true;
+    document.body.classList.remove('sheet-open');
+  }
 
   /* ---------------- Expose ---------------- */
   window.App = {
     search, setDate, swapCities, applyFilters,
-    selectBus, toggleSeat, toPassengerDetails, toPayment, confirmBooking,
-    printTicket, downloadTicket,
+    quickSearch, daysToWeekend, onPriceInput, openFilters, closeFilters, pickDate, renderAmenityFilters,
+    checkoutSendCode, checkoutVerifyCode, cancelAuth, authBackToEmail,
+    selectBus, switchDeck, toggleSeat, toPassengerDetails, toPayment, confirmBooking,
+    printTicket, downloadTicket, copyPNR, addToCalendar, bookReturn, resendTicket,
     openMyBookings, sendCode, verifyCode, backToEmail, signOut, viewMyBooking,
     cancelBooking, confirmCancel, keepBooking,
-    goHome, backToResults, backToSeats
+    goHome, backToResults, backToSeats, openHelp, skipToContent
   };
 
   document.addEventListener('DOMContentLoaded', init);

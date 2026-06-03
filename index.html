@@ -10,6 +10,8 @@
 </head>
 <body>
 
+  <a class="skip-link" href="#" onclick="App.skipToContent();return false;">Skip to content</a>
+
   <!-- ============ HEADER ============ -->
   <header class="site-header">
     <div class="container header-inner">
@@ -20,6 +22,7 @@
       <nav class="header-nav">
         <a href="#" onclick="App.goHome();return false;">Home</a>
         <a href="#" onclick="App.openMyBookings();return false;">My Bookings</a>
+        <a href="#" onclick="App.openHelp();return false;">Help</a>
       </nav>
     </div>
   </header>
@@ -54,6 +57,15 @@
       <div class="quick-dates">
         <button type="button" onclick="App.setDate(0)">Today</button>
         <button type="button" onclick="App.setDate(1)">Tomorrow</button>
+        <button type="button" onclick="App.setDate(App.daysToWeekend())">This weekend</button>
+      </div>
+
+      <!-- Swipeable next-14-days strip (built by app.js) -->
+      <div class="date-strip" id="date-strip" role="group" aria-label="Pick a journey date"></div>
+
+      <div class="popular-routes" id="popular-routes" hidden>
+        <span class="popular-label">Popular routes</span>
+        <div class="popular-chips" id="popular-chips"></div>
       </div>
 
       <datalist id="city-list"></datalist>
@@ -66,14 +78,38 @@
       <div class="results-head">
         <div>
           <h2 id="results-route">Bangalore → Hyderabad</h2>
-          <p id="results-meta" class="muted"></p>
+          <p id="results-meta" class="muted" role="status" aria-live="polite"></p>
         </div>
-        <button class="ghost-btn" onclick="App.goHome()">Modify Search</button>
+        <div class="results-head-actions">
+          <button class="ghost-btn" onclick="App.goHome()">Modify Search</button>
+        </div>
       </div>
 
+      <!-- Mobile-only sticky sort/filter bar — opens the filters bottom sheet -->
+      <div class="results-mobile-bar" id="results-mobile-bar">
+        <button type="button" onclick="App.openFilters('sort')">↕ Sort</button>
+        <button type="button" onclick="App.openFilters('filter')">⚙ Filter</button>
+      </div>
+      <div class="filters-backdrop" id="filters-backdrop" hidden onclick="App.closeFilters()"></div>
+
       <div class="results-layout">
-        <aside class="filters">
-          <h3>Filters</h3>
+        <aside class="filters" id="filters">
+          <div class="filters-sheet-head">
+            <h3 id="filters-sheet-title">Sort &amp; filter</h3>
+            <button type="button" class="ghost-btn" onclick="App.closeFilters()">Done</button>
+          </div>
+          <h3 class="filters-title">Filters</h3>
+          <div class="filter-group sort-group">
+            <h4>Sort by</h4>
+            <select id="sort-by" class="sort-select" onchange="App.applyFilters()">
+              <option value="departure">Departure</option>
+              <option value="price-asc">Price: low to high</option>
+              <option value="price-desc">Price: high to low</option>
+              <option value="duration">Duration</option>
+              <option value="rating">Rating</option>
+              <option value="seats">Seats left</option>
+            </select>
+          </div>
           <div class="filter-group">
             <h4>Bus Type</h4>
             <label><input type="checkbox" class="f-type" value="A/C" onchange="App.applyFilters()"> A/C</label>
@@ -86,6 +122,22 @@
             <label><input type="checkbox" class="f-time" value="morning" onchange="App.applyFilters()"> Before 12 PM</label>
             <label><input type="checkbox" class="f-time" value="evening" onchange="App.applyFilters()"> 12 PM – 6 PM</label>
             <label><input type="checkbox" class="f-time" value="night" onchange="App.applyFilters()"> After 6 PM</label>
+          </div>
+          <div class="filter-group">
+            <h4>Max price</h4>
+            <input type="range" id="f-price" class="f-price" min="0" max="2000" step="50" value="2000"
+                   oninput="App.onPriceInput()" onchange="App.applyFilters()" />
+            <div class="f-price-val muted small" id="f-price-val">Up to ₹2,000</div>
+          </div>
+          <div class="filter-group">
+            <h4>Minimum rating</h4>
+            <label><input type="radio" name="f-rating" class="f-rating" value="0" checked onchange="App.applyFilters()"> Any</label>
+            <label><input type="radio" name="f-rating" class="f-rating" value="4" onchange="App.applyFilters()"> ★ 4.0+</label>
+            <label><input type="radio" name="f-rating" class="f-rating" value="4.5" onchange="App.applyFilters()"> ★ 4.5+</label>
+          </div>
+          <div class="filter-group" id="amenity-filter-group">
+            <h4>Amenities</h4>
+            <div id="amenity-options"></div>
           </div>
         </aside>
 
@@ -107,8 +159,9 @@
             <span><i class="seat-demo available"></i> Available</span>
             <span><i class="seat-demo selected"></i> Selected</span>
             <span><i class="seat-demo booked"></i> Booked</span>
-            <span><i class="seat-demo ladies"></i> Ladies</span>
+            <span id="legend-ladies" hidden><i class="seat-demo ladies"></i> Ladies</span>
           </div>
+          <p class="seat-scroll-hint" aria-hidden="true">Swipe to see all seats →</p>
           <div id="seat-map"><!-- decks --></div>
         </div>
 
@@ -123,12 +176,22 @@
 
           <div class="side-card">
             <h3>Selected Seats</h3>
+            <div id="hold-timer" class="hold-timer" role="status" aria-live="polite" hidden></div>
             <p id="selected-seats-text" class="muted">No seats selected</p>
             <div class="fare-row"><span>Seats</span><span id="seat-count">0</span></div>
             <div class="fare-row total"><span>Total Fare</span><span id="seat-total">₹0</span></div>
             <button class="primary-btn full" id="to-passenger-btn" disabled onclick="App.toPassengerDetails()">Continue</button>
           </div>
         </div>
+      </div>
+
+      <!-- Mobile-only sticky action bar: hold timer + total + Continue, always in the thumb zone -->
+      <div class="seat-action-bar" id="seat-action-bar">
+        <div class="sab-info">
+          <span class="sab-hold" id="sab-hold"></span>
+          <span class="sab-summary" id="sab-summary">Select your seats</span>
+        </div>
+        <button class="primary-btn" id="sab-continue" disabled onclick="App.toPassengerDetails()">Continue</button>
       </div>
     </div>
   </section>
@@ -161,12 +224,14 @@
           </div>
         </div>
 
+        <div class="side-card fare-breakdown" id="passenger-breakdown"><!-- base + GST --></div>
+
         <div class="pay-summary">
           <div>
-            <span class="muted">Total Payable</span>
+            <span class="muted">Total payable</span>
             <strong id="passenger-total">₹0</strong>
           </div>
-          <button type="submit" class="primary-btn">Proceed to Pay</button>
+          <button type="submit" class="primary-btn">Continue to payment</button>
         </div>
       </form>
     </div>
@@ -178,10 +243,14 @@
       <h2>Payment</h2>
       <div class="side-card pay-card">
         <div class="pay-amount">
-          <span class="muted">Amount to Pay</span>
+          <span class="muted">Total payable</span>
           <strong id="pay-amount">₹0</strong>
         </div>
-        <p class="demo-badge">DEMO MODE — no real money is charged</p>
+
+        <div class="fare-breakdown" id="pay-breakdown"><!-- base + GST --></div>
+        <div class="cancel-policy" id="pay-cancel-policy"><!-- dynamic refund window --></div>
+
+        <p class="demo-badge">🔒 Secure demo checkout — no real money is charged. No charge until your seats are confirmed.</p>
 
         <div class="pay-methods">
           <label class="pay-method">
@@ -212,6 +281,7 @@
 
         <button class="primary-btn full" id="pay-now-btn" onclick="App.confirmBooking()">Pay Now</button>
         <button class="ghost-btn full" onclick="App.backToSeats()">Cancel</button>
+        <p class="trust-marks muted small">🔒 Payments encrypted · UPI · Visa · Mastercard · RuPay</p>
       </div>
     </div>
   </section>
@@ -225,11 +295,18 @@
         <p class="muted">Your ticket has been booked successfully.</p>
       </div>
 
+      <div id="ticket-email-status" class="email-status" role="status" aria-live="polite"></div>
+
       <div class="ticket" id="ticket-card"><!-- ticket details --></div>
 
       <div class="ticket-actions">
-        <button class="primary-btn" onclick="App.downloadTicket()">⬇ Download Ticket (PDF)</button>
-        <button class="ghost-btn" onclick="App.goHome()">Book Another</button>
+        <button class="primary-btn" onclick="App.downloadTicket()">⬇ Download ticket (PDF)</button>
+        <button class="ghost-btn" onclick="App.copyPNR()">Copy PNR</button>
+        <button class="ghost-btn" onclick="App.addToCalendar()">Add to calendar</button>
+      </div>
+      <div class="ticket-actions secondary">
+        <button class="primary-btn" onclick="App.bookReturn()">Book your return trip</button>
+        <button class="ghost-btn" onclick="App.goHome()">Search again</button>
       </div>
     </div>
   </section>
@@ -276,12 +353,75 @@
     </div>
   </section>
 
+  <!-- ============ HELP / SUPPORT ============ -->
+  <section class="view" id="view-help" hidden>
+    <div class="container narrow">
+      <button class="ghost-btn back" onclick="App.goHome()">← Home</button>
+      <h2>Help &amp; support</h2>
+
+      <div class="side-card">
+        <h3>Contact us</h3>
+        <p class="muted">Helpline <strong>1800-200-1234</strong> (9am–9pm) · <strong>support@mstravels.demo</strong></p>
+      </div>
+
+      <div class="side-card">
+        <h3>Find a booking</h3>
+        <p class="muted small">Booked but can't find your ticket? Look it up with your email in My Bookings.</p>
+        <button class="primary-btn" onclick="App.openMyBookings()">Go to My Bookings</button>
+      </div>
+
+      <div class="side-card">
+        <h3>FAQs</h3>
+        <details><summary>Where is my ticket?</summary><p class="muted small">Your e-ticket is emailed on confirmation and can be re-downloaded any time from My Bookings. If the email didn't arrive, use the Resend button on the confirmation screen.</p></details>
+        <details><summary>How do I cancel and what's the refund?</summary><p class="muted small">Open the booking in My Bookings and choose Cancel. Refunds are tiered by how far ahead you cancel: 90% (24h+ before), 70% (12–24h), 50% (4–12h), and none within 4 hours of departure.</p></details>
+        <details><summary>How long do refunds take?</summary><p class="muted small">This is a demo, so no real money is taken and refunds are simulated. In production, refunds credit the original payment method.</p></details>
+        <details><summary>Cancellation &amp; refund policy</summary><p class="muted small">90% / 70% / 50% / 0% by time-to-departure, as above. The exact refund for your trip is shown before you confirm a cancellation.</p></details>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ FOOTER ============ -->
   <footer class="site-footer">
     <div class="container">
-      <p>© MS Travels — Bus Booking Demo built on Supabase.</p>
+      <p class="footer-links">
+        <a href="#" onclick="App.openHelp();return false;">Help &amp; support</a> ·
+        <a href="#" onclick="App.openHelp();return false;">Cancellation policy</a> ·
+        <a href="#" onclick="App.openMyBookings();return false;">My Bookings</a>
+      </p>
+      <p>© 2026 MS Travels — Bus Booking Demo built on Supabase.</p>
     </div>
   </footer>
+
+  <!-- Mobile bottom tab nav (hidden on desktop and during the seat→pay funnel) -->
+  <nav class="bottom-nav" id="bottom-nav" aria-label="Primary">
+    <button type="button" data-tab="home" onclick="App.goHome()"><span class="bn-ico">🔍</span><span>Search</span></button>
+    <button type="button" data-tab="trips" onclick="App.openMyBookings()"><span class="bn-ico">🎫</span><span>My Trips</span></button>
+    <button type="button" data-tab="help" onclick="App.openHelp()"><span class="bn-ico">💬</span><span>Help</span></button>
+  </nav>
+
+  <!-- Checkout sign-in modal (email one-time code) — required before booking -->
+  <div class="auth-overlay" id="auth-overlay" hidden>
+    <div class="auth-modal">
+      <button type="button" class="auth-close" aria-label="Close" onclick="App.cancelAuth()">✕</button>
+      <h3>Sign in to book</h3>
+      <p class="muted small">We'll email you a one-time code. Your ticket is tied to this email, so you can always view, download or cancel it.</p>
+
+      <form id="auth-email-form" onsubmit="App.checkoutSendCode(event)">
+        <label for="auth-email">Email address</label>
+        <input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com" required />
+        <button class="primary-btn full" type="submit">Send code</button>
+      </form>
+
+      <form id="auth-code-form" hidden onsubmit="App.checkoutVerifyCode(event)">
+        <p class="muted small">Enter the code sent to <strong id="auth-email-echo"></strong>.</p>
+        <label for="auth-code">Verification code</label>
+        <input type="text" id="auth-code" inputmode="numeric" autocomplete="one-time-code"
+               pattern="[0-9]*" maxlength="10" placeholder="Enter code" required />
+        <button class="primary-btn full" type="submit">Verify &amp; continue</button>
+        <button class="ghost-btn full" type="button" onclick="App.authBackToEmail()">Use a different email</button>
+      </form>
+    </div>
+  </div>
 
   <!-- Loading overlay -->
   <div class="overlay" id="overlay" hidden>
@@ -290,23 +430,19 @@
   </div>
 
   <!-- Toast -->
-  <div class="toast" id="toast" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="assertive" hidden></div>
 
   <!-- Hidden print-quality ticket, rendered into the PDF on download -->
   <div id="pdf-ticket-holder" aria-hidden="true">
     <div id="pdf-ticket"><!-- built by app.js --></div>
   </div>
 
-  <!-- Client-side PDF generation + QR / barcode for the ticket.
-       Explicit html2canvas + jsPDF so window.html2canvas / window.jspdf.jsPDF
-       are guaranteed globals (the all-in-one bundle did not expose them, which
-       made the ticket fall back to the browser print dialog). -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <!-- The PDF/QR/barcode libraries (html2canvas, jsPDF, qrcodejs, JsBarcode) are
+       only needed at the final "Download Ticket" step, so they are NOT loaded
+       up-front. app.js lazy-injects them on first download (see ensurePdfLibs),
+       which keeps ~0.5MB of render-blocking script off every other screen. -->
   <!-- Supabase JS client — powers the email one-time-code login -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="app.js" defer></script>
 </body>
 </html>

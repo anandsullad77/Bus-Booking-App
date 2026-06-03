@@ -22,6 +22,11 @@ body{
   line-height:1.5;
 }
 a{color:inherit;text-decoration:none}
+.skip-link{
+  position:absolute;left:-9999px;top:0;z-index:400;
+  background:var(--navy);color:#fff;padding:10px 16px;border-radius:0 0 8px 0;font-weight:600;
+}
+.skip-link:focus{left:0;outline:2px solid #fff;outline-offset:-4px}
 .container{max-width:1140px;margin:0 auto;padding:0 20px}
 .container.narrow{max-width:760px}
 .muted{color:var(--muted)}
@@ -164,29 +169,61 @@ h2{color:var(--navy)}
 .seat-legend{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:20px;font-size:.82rem;color:var(--muted)}
 .seat-legend span{display:flex;align-items:center;gap:6px}
 .seat-demo{width:18px;height:18px;border-radius:4px;display:inline-block;border:1.5px solid}
-.seat-demo.available{background:#fff;border-color:#9ca3af}
-.seat-demo.selected{background:var(--green);border-color:var(--green)}
+.seat-demo.available{background:#f1f4f9;border-color:#cbd5e1}
+.seat-demo.selected{background:#e6336b;border-color:#e6336b}
 .seat-demo.booked{background:#cbd5e1;border-color:#94a3b8}
-.seat-demo.ladies{background:#fce7f3;border-color:#ec4899}
+.seat-demo.ladies{background:#fbe3ef;border-color:#ec4899}
 
 .deck{margin-bottom:28px}
 .deck-title{font-weight:600;color:var(--navy);margin-bottom:14px;font-size:.95rem}
 .deck-grid{display:flex;flex-direction:column;gap:10px}
 .deck-row{display:flex;gap:10px;align-items:center}
 .deck-row.gap{margin-left:40px}
-.seat{
-  width:46px;height:46px;border:1.5px solid #9ca3af;border-radius:6px;
-  background:#fff;cursor:pointer;font-size:.7rem;color:var(--muted);
-  display:flex;align-items:center;justify-content:center;position:relative;
-  transition:all .15s;font-weight:500;
+
+/* Deck toggle (Lower / Upper) — segmented control shown for sleeper buses */
+.deck-tabs{
+  display:flex;gap:6px;background:#eef2f7;border:1px solid var(--line);
+  border-radius:12px;padding:5px;margin-bottom:20px;max-width:360px;
 }
-.seat.sleeper{width:70px;height:34px;border-radius:8px}
-.seat:hover:not(.booked){border-color:var(--green);color:var(--green)}
-.seat.selected{background:var(--green);border-color:var(--green);color:#fff}
+.deck-tab{
+  flex:1;background:transparent;border:none;border-radius:8px;cursor:pointer;
+  font-family:inherit;font-weight:600;color:var(--navy);padding:9px 12px;
+  display:flex;flex-direction:column;align-items:center;gap:2px;transition:background .15s,color .15s;
+}
+.deck-tab .deck-tab-count{font-size:.68rem;font-weight:500;color:var(--muted)}
+.deck-tab.active{background:var(--navy);color:#fff;box-shadow:var(--shadow)}
+.deck-tab.active .deck-tab-count{color:rgba(255,255,255,.8)}
+
+.seat{
+  width:46px;height:46px;border:1.5px solid #cbd5e1;border-radius:8px;
+  background:#f1f4f9;cursor:pointer;font-size:.72rem;color:#5b6b8c;
+  display:flex;align-items:center;justify-content:center;position:relative;
+  transition:all .15s;font-weight:600;
+}
+/* sleeper berths are vertical pills (like the reference seat map) */
+.seat.sleeper{width:50px;height:62px;border-radius:12px}
+.seat:hover:not(.booked):not(.selected){border-color:var(--blue);color:var(--navy)}
+.seat.selected{background:#e6336b;border-color:#e6336b;color:#fff}
 .seat.booked{background:#cbd5e1;border-color:#94a3b8;cursor:not-allowed;color:#64748b}
-.seat.ladies{background:#fce7f3;border-color:#ec4899}
-.seat.ladies.selected{background:var(--green);border-color:var(--green)}
+.seat.ladies{background:#fbe3ef;border-color:#ec4899;color:#be185d}
+.seat.ladies.selected{background:#e6336b;border-color:#e6336b;color:#fff}
 .steering{font-size:1.3rem;align-self:flex-end;margin-bottom:4px;opacity:.5}
+
+/* seats are real <button>s now — reset default chrome, keep the look */
+.seat{font-family:inherit;padding:0;line-height:1;appearance:none;-webkit-appearance:none}
+.seat:disabled{cursor:not-allowed}
+.aisle-spacer{width:28px;display:inline-block}
+/* status conveyed by an icon too, not colour alone (WCAG 1.4.1) */
+.seat.selected::after{content:"✓";position:absolute;top:1px;right:3px;font-size:.6rem;line-height:1}
+.seat.booked::after{content:"╳";position:absolute;top:1px;right:3px;font-size:.6rem;line-height:1;opacity:.7}
+
+/* visible keyboard focus everywhere (replaces the stripped outlines) */
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.seat:focus-visible{outline:2px solid var(--navy);outline-offset:2px;z-index:1}
+
+/* ladies seat marker (only rendered when a route actually flags ladies seats) */
+.seat.ladies::before{content:"♀";position:absolute;top:1px;left:3px;font-size:.6rem;line-height:1;color:#db2777}
+.ladies-note{display:block;margin-top:5px;font-size:.72rem;font-weight:600;color:#db2777}
 
 /* ---------- Booking side ---------- */
 .booking-side{display:flex;flex-direction:column;gap:16px;position:sticky;top:84px}
@@ -429,6 +466,32 @@ h2{color:var(--navy)}
 /* ---------- Footer ---------- */
 .site-footer{background:var(--navy);color:rgba(255,255,255,.8);padding:24px 0;text-align:center;font-size:.85rem;margin-top:40px}
 
+/* ---------- Checkout sign-in modal ---------- */
+.auth-overlay{
+  position:fixed;inset:0;background:rgba(29,53,87,.55);z-index:190;
+  display:flex;align-items:center;justify-content:center;padding:20px;
+}
+.auth-modal{
+  background:#fff;border-radius:16px;padding:26px 24px;max-width:380px;width:100%;
+  position:relative;box-shadow:0 24px 60px rgba(0,0,0,.32);
+}
+.auth-modal h3{color:var(--navy);margin-bottom:8px;font-size:1.25rem}
+.auth-modal form{display:flex;flex-direction:column;gap:6px;margin-top:16px}
+.auth-modal label{font-size:.8rem;font-weight:600;color:var(--navy)}
+.auth-modal input{
+  border:1.5px solid var(--line);border-radius:10px;padding:13px 14px;
+  font-family:inherit;font-size:16px;margin-bottom:10px;
+}
+.auth-modal input:focus{outline:none;border-color:var(--blue)}
+.auth-modal .ghost-btn.full{margin-top:6px}
+.auth-close{
+  position:absolute;top:12px;right:14px;background:none;border:none;
+  font-size:1.15rem;line-height:1;cursor:pointer;color:var(--muted);padding:4px;
+}
+#auth-code{letter-spacing:8px;text-align:center;font-size:1.3rem;font-weight:600}
+/* locked (verified) contact email on the passenger form */
+input.locked{background:#f4f6f9;color:var(--muted);cursor:not-allowed}
+
 /* ---------- Overlay & toast ---------- */
 .overlay{
   position:fixed;inset:0;background:rgba(29,53,87,.55);z-index:200;
@@ -548,6 +611,272 @@ h2{color:var(--navy)}
   .bus-times{flex-wrap:wrap}
   .seat.sleeper{width:52px}
   .seat{width:40px;height:40px}
+}
+
+/* ====================================================================
+   ADDITIONS — popular routes, sort/filters, fare transparency, seat hold,
+   trust marks, confirmation actions, help. Appended so existing rules win
+   where intended and these layer on top.
+   ==================================================================== */
+
+/* Popular-route chips (hero + empty state) */
+.popular-routes{margin-top:20px;text-align:center}
+.popular-label{display:block;font-size:.78rem;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.85);margin-bottom:10px}
+.popular-chips{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+.popular-chips.center{margin-top:14px}
+.route-chip{
+  background:#fff;border:1.5px solid var(--line);border-radius:22px;
+  padding:8px 14px;font-family:inherit;font-size:.85rem;font-weight:600;color:var(--navy);
+  cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:border-color .15s,transform .1s;
+}
+.route-chip:hover{border-color:var(--blue);transform:translateY(-1px)}
+.route-chip-fare{background:var(--light);color:var(--blue);border-radius:12px;padding:1px 8px;font-size:.78rem}
+
+/* Results header sort control */
+.results-head-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.sort-control{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--muted)}
+.sort-control select{
+  border:1.5px solid var(--line);border-radius:8px;padding:8px 10px;font-family:inherit;font-size:.9rem;color:var(--text);
+}
+.sort-control select:focus{outline:none;border-color:var(--blue)}
+.f-price{width:100%;accent-color:var(--red)}
+.f-price-val{margin-top:4px}
+
+/* Bus card extras */
+.bus-points{margin-top:8px}
+.bus-cancel{margin-top:4px;color:var(--green)}
+.bus-seats-left.urgent{color:var(--red-dark);font-weight:600}
+.bus-seats-left.sold-out{color:var(--muted)}
+
+/* Fare breakdown + pre-pay cancellation policy + trust marks */
+.fare-breakdown{margin:0 0 12px}
+.fare-breakdown .fare-row{font-size:.92rem}
+.cancel-policy{
+  background:#f1faee;border:1px solid #d8e8df;border-radius:10px;
+  padding:10px 14px;font-size:.85rem;color:var(--navy);margin-bottom:12px;
+}
+.cancel-policy-icon{margin-right:4px}
+.cancel-policy a,.email-status a,.link-btn{color:var(--blue);font-weight:600}
+.trust-marks{text-align:center;margin-top:10px}
+.link-btn{background:none;border:none;padding:0;font:inherit;color:var(--blue);font-weight:600;cursor:pointer;text-decoration:underline}
+
+/* Seat-hold countdown */
+.hold-timer{
+  background:#fff5f5;border:1px solid var(--red);color:var(--red-dark);
+  border-radius:8px;padding:8px 12px;font-size:.82rem;font-weight:600;margin-bottom:10px;text-align:center;
+}
+
+/* Confirmation: email status + secondary actions */
+.email-status{text-align:center;font-size:.9rem;margin-bottom:14px;padding:8px 12px;border-radius:8px}
+.email-status.sending{background:#eef4fb;color:var(--blue)}
+.email-status.ok{background:#e7f6f3;color:var(--green)}
+.email-status.fail{background:#fff5f5;color:var(--red-dark)}
+.ticket-actions.secondary{margin-top:12px}
+
+/* Help / FAQ */
+#view-help .side-card{margin-bottom:16px}
+#view-help details{border-top:1px solid var(--line);padding:10px 0}
+#view-help details summary{cursor:pointer;font-weight:600;color:var(--navy)}
+#view-help details p{margin-top:8px}
+.footer-links{margin-bottom:6px}
+.footer-links a:hover{color:#fff;text-decoration:underline}
+
+/* ====================================================================
+   MOBILE P0 — sticky seat action bar, filters bottom sheet, touch targets.
+   Desktop defaults hide the mobile-only chrome; the @media blocks below
+   come AFTER the earlier responsive rules, so they win at equal specificity.
+   ==================================================================== */
+.results-mobile-bar{display:none}
+.filters-sheet-head{display:none}
+.seat-action-bar{display:none}
+.filters-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:140}
+.sort-select{
+  width:100%;border:1.5px solid var(--line);border-radius:8px;padding:10px 12px;
+  font-family:inherit;font-size:.95rem;color:var(--text);background:#fff;
+}
+.sort-select:focus{outline:none;border-color:var(--blue)}
+body.sheet-open{overflow:hidden}
+
+@media(max-width:900px){
+  /* sticky Sort/Filter launcher under the header */
+  .results-mobile-bar{
+    display:flex;gap:10px;position:sticky;top:64px;z-index:60;
+    background:var(--bg);padding:10px 0;
+  }
+  .results-mobile-bar button{
+    flex:1;background:#fff;border:1.5px solid var(--line);border-radius:10px;
+    padding:13px;font-family:inherit;font-weight:600;font-size:.95rem;color:var(--navy);cursor:pointer;
+  }
+  .results-mobile-bar button:active{background:var(--light)}
+
+  /* filters become a slide-up bottom sheet */
+  .filters{
+    position:fixed;left:0;right:0;bottom:0;top:auto;width:auto;z-index:150;margin:0;
+    max-height:80vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+    border-radius:18px 18px 0 0;
+    transform:translateY(110%);transition:transform .25s ease;
+    box-shadow:0 -10px 30px rgba(0,0,0,.22);
+    padding:16px 18px calc(18px + env(safe-area-inset-bottom));
+  }
+  .filters.open{transform:translateY(0)}
+  /* Sort and Filter open the same sheet but show only their own section */
+  .filters.mode-sort .filter-group:not(.sort-group){display:none}
+  .filters.mode-filter .sort-group{display:none}
+  .filters .filter-group{display:block;margin:0 0 18px}
+  .filters-sheet-head{
+    display:flex;justify-content:space-between;align-items:center;
+    position:sticky;top:0;background:#fff;padding-bottom:10px;margin-bottom:6px;z-index:1;
+  }
+  .filters-sheet-head h3{margin:0}
+  .filters-title{display:none}
+
+  /* the desktop summary card drops below the map here, so promote the
+     sticky action bar (and de-duplicate the timer + Continue) */
+  #to-passenger-btn{display:none}
+  #hold-timer{display:none}
+  .seat-action-bar{
+    display:flex;align-items:center;gap:12px;position:sticky;bottom:0;z-index:60;
+    background:#fff;border-top:1px solid var(--line);
+    margin:14px -20px 0;padding:12px 20px calc(12px + env(safe-area-inset-bottom));
+    box-shadow:0 -6px 20px rgba(0,0,0,.12);
+  }
+  .seat-action-bar .sab-info{display:flex;flex-direction:column;flex:1;min-width:0}
+  .seat-action-bar .sab-hold{font-size:.72rem;color:var(--red-dark);font-weight:600}
+  .seat-action-bar .sab-hold:empty{display:none}
+  .seat-action-bar .sab-summary{font-weight:700;color:var(--navy)}
+  .seat-action-bar .primary-btn{flex:0 0 auto;padding:13px 22px;width:auto}
+}
+
+@media(max-width:640px){
+  /* 44px minimum touch targets (Apple HIG / Material) */
+  .seat{width:44px;height:44px}
+  .seat.sleeper{width:48px;height:58px}
+  .quick-dates button{padding:9px 16px}
+  .route-chip{min-height:40px}
+  .seat-action-bar{margin:14px -14px 0;padding:12px 14px calc(12px + env(safe-area-inset-bottom))}
+  .results-mobile-bar{top:56px}            /* header is 56px tall at this width */
+  .toast{bottom:96px}                      /* clear the sticky action bar */
+}
+
+@media(max-width:400px){
+  .seat{width:44px;height:44px}            /* hold the floor — don't shrink below 44 */
+  .seat.sleeper{width:46px;height:56px}
+}
+
+/* ====================================================================
+   MOBILE P1 — skeletons, sticky passenger CTA, compact results header,
+   seat-map scroll affordance.
+   ==================================================================== */
+
+/* Skeleton shimmer (search results + seat grid) */
+.sk{
+  background:linear-gradient(90deg,#eef2f6 25%,#e2e8f0 37%,#eef2f6 63%);
+  background-size:400% 100%;border-radius:6px;animation:sk-shimmer 1.3s ease infinite;
+}
+@keyframes sk-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.skeleton-card{align-items:start}
+.sk-line{height:12px;margin:6px 0}
+.sk-line.w25{width:25%}.sk-line.w30{width:30%}.sk-line.w40{width:40%}
+.sk-line.w55{width:55%}.sk-line.w70{width:70%}
+.sk-pill{width:54px;height:22px;border-radius:6px;margin-left:auto}
+.sk-btn{width:120px;height:40px;border-radius:10px;margin-left:auto}
+.sk-seat{width:46px;height:46px;border-radius:6px}
+@media(prefers-reduced-motion:reduce){.sk{animation:none}}
+
+/* Seat-map scroll affordance */
+.seat-scroll-hint{display:none}
+.seat-map-wrap{position:relative}
+
+/* Sticky passenger CTA on mobile (the long form) */
+@media(max-width:640px){
+  .pay-summary{
+    position:sticky;bottom:0;z-index:60;flex-direction:row;align-items:center;text-align:left;
+    gap:12px;margin:8px -14px 0;border-radius:0;border-top:1px solid var(--line);
+    box-shadow:0 -6px 20px rgba(0,0,0,.12);
+    padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+  }
+  .pay-summary > div{flex:1;min-width:0}
+  .pay-summary strong{font-size:1.2rem}
+  .pay-summary .primary-btn{width:auto;flex:0 0 auto;padding:13px 22px}
+
+  /* Compact, tappable trip-summary header (one row instead of three) */
+  .results-head{flex-direction:row;align-items:center;gap:10px;margin-bottom:14px}
+  .results-head h2{font-size:1.05rem}
+  .results-head #results-meta{font-size:.78rem}
+  .results-head .ghost-btn{width:auto;white-space:nowrap;padding:9px 14px}
+
+  /* Seat-map: fade the right edge for any rare overflow (single deck usually fits) */
+  .seat-scroll-hint{display:none}
+  .seat-map-wrap::after{
+    content:"";position:absolute;top:64px;bottom:18px;right:0;width:26px;pointer-events:none;
+    background:linear-gradient(to right,rgba(255,255,255,0),#fff);
+  }
+}
+
+/* ====================================================================
+   MOBILE P2 — bottom tab nav, date strip, chip carousel, status polish.
+   ==================================================================== */
+
+/* Swipeable next-14-days strip (lives in the dark hero) */
+.date-strip{
+  display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+  margin-top:16px;padding-bottom:4px;scrollbar-width:none;
+}
+.date-strip::-webkit-scrollbar{display:none}
+.ds-day{
+  flex:0 0 auto;width:60px;background:rgba(255,255,255,.14);
+  border:1px solid rgba(255,255,255,.3);border-radius:12px;padding:9px 0;cursor:pointer;
+  font-family:inherit;color:#fff;display:flex;flex-direction:column;align-items:center;gap:1px;transition:background .15s,color .15s;
+}
+.ds-day:hover{background:rgba(255,255,255,.24)}
+.ds-day.active{background:#fff;border-color:#fff;color:var(--navy)}
+.ds-dow{font-size:.66rem;text-transform:uppercase;letter-spacing:.4px;opacity:.9}
+.ds-num{font-size:1.15rem;font-weight:700;line-height:1}
+.ds-mon{font-size:.64rem;opacity:.8}
+.ds-day.active .ds-dow,.ds-day.active .ds-mon{opacity:1}
+
+/* Bottom tab nav — mobile only, hidden during the seat→pay funnel */
+.bottom-nav{
+  position:fixed;left:0;right:0;bottom:0;z-index:120;display:none;
+  justify-content:space-around;align-items:stretch;background:#fff;
+  border-top:1px solid var(--line);box-shadow:0 -4px 16px rgba(0,0,0,.08);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.bottom-nav button{
+  flex:1;background:none;border:none;cursor:pointer;font-family:inherit;
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:8px 4px;color:var(--muted);font-size:.7rem;font-weight:600;
+}
+.bottom-nav .bn-ico{font-size:1.15rem;line-height:1}
+
+@media(max-width:640px){
+  /* show the tab bar only on the browse/manage views (not the checkout funnel) */
+  body[data-view="view-hero"] #bottom-nav,
+  body[data-view="view-results"] #bottom-nav,
+  body[data-view="view-mybookings"] #bottom-nav,
+  body[data-view="view-help"] #bottom-nav,
+  body[data-view="view-ticket"] #bottom-nav{display:flex}
+
+  /* reserve space so the fixed bar never covers footer/content */
+  body[data-view="view-hero"],
+  body[data-view="view-results"],
+  body[data-view="view-mybookings"],
+  body[data-view="view-help"],
+  body[data-view="view-ticket"]{padding-bottom:calc(58px + env(safe-area-inset-bottom))}
+
+  /* active tab highlight */
+  body[data-view="view-hero"] #bottom-nav [data-tab="home"],
+  body[data-view="view-results"] #bottom-nav [data-tab="home"],
+  body[data-view="view-mybookings"] #bottom-nav [data-tab="trips"],
+  body[data-view="view-help"] #bottom-nav [data-tab="help"]{color:var(--red)}
+
+  /* popular routes become a horizontal carousel instead of wrapping */
+  .popular-chips,.popular-chips.center{
+    flex-wrap:nowrap;overflow-x:auto;justify-content:flex-start;
+    -webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:none;
+  }
+  .popular-chips::-webkit-scrollbar{display:none}
+  .route-chip{flex:0 0 auto}
 }
 
 /* ---------- Print ---------- */
